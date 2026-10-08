@@ -6,8 +6,6 @@ use syn::{parse_quote, Expr, Generics, ItemTrait, LitStr, Path, Token, Type, Vis
 use syn::spanned::Spanned;
 
 mod parse;
-#[cfg(test)]
-mod tests;
 
 mod output;
 

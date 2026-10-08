@@ -21,6 +21,3 @@ pub trait Resources<T: Debug> {
     fn get(id: u64) -> Option<T>;
     fn new(value: T);
 }
-
-// include expanded form here for debugging:
-// include!("../../macros_impl/src/tests/outputs/resource.rs");

@@ -18,5 +18,3 @@ trait TodoService {
     /// Create a new to-do item
     fn new_todo(todo: Todo);
 }
-
-// include!("../../macros_impl/src/tests/outputs/simple.rs");
