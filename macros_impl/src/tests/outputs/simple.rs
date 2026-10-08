@@ -3,7 +3,7 @@
     reason = "These might not always be used, but they should be available in this module anyway"
 )]
 pub use todo_service::{
-    TodoService, TodoServiceAsyncClient, TodoServiceBlockingClient, TodoServiceServer,
+    TodoService, TodoServiceClient, TodoServiceServer,
 };
 
 #[allow(
@@ -11,19 +11,8 @@ pub use todo_service::{
     reason = "These might not always be used, but it's easier to include always"
 )]
 mod todo_service {
-    use std::borrow::Cow;
+    use ::trait_rpc::__macro_imports::*;
     use super::*;
-    use std::convert::Infallible;
-    use std::marker::PhantomData;
-    use ::trait_rpc::{
-        client::{AsyncClient, BlockingClient, ResponseStream, StreamClient, WrongResponseType},
-        futures::sink::{Sink, SinkExt},
-        futures::stream::{Stream, StreamExt},
-        serde::{Deserialize, Serialize},
-        server::{Handler, IntoHandler},
-        Rpc, RpcWithServer,
-        server::StreamError
-    };
 
     /// A service for managing to-do items
     ///
@@ -31,30 +20,21 @@ mod todo_service {
     pub struct TodoService;
 
     impl Rpc for TodoService {
-        type AsyncClient<_Client: AsyncClient<Self::Request, Self::Response>> =
-            TodoServiceAsyncClient<_Client>;
-        type BlockingClient<_Client: BlockingClient<Self::Request, Self::Response>> =
-            TodoServiceBlockingClient<_Client>;
+        type Client<_Conn: Connection, _Format> =
+            TodoServiceClient<_Conn, _Format>;
         type Request = Request;
         type Response = Response;
-        fn async_client<_Client: AsyncClient<Request, Response>>(
-            transport: _Client,
-        ) -> TodoServiceAsyncClient<_Client> {
-            TodoServiceAsyncClient(transport)
-        }
-        fn blocking_client<_Client: BlockingClient<Request, Response>>(
-            transport: _Client,
-        ) -> TodoServiceBlockingClient<_Client> {
-            TodoServiceBlockingClient(transport)
-        }
         fn service_name() -> &'static str {
             stringify!(TodoService)
+        }
+        fn client<_Conn: Connection, _Format>(client: Client<_Conn, _Format>) -> Self::Client<_Conn, _Format> {
+            TodoServiceClient(client)
         }
     }
 
     impl<Server: TodoServiceServer> RpcWithServer<Server> for TodoService {
-        type Handler = TodoServiceHandler<Server>;
-        fn handler(server: Server) -> Self::Handler {
+        type Handler<_Format> = TodoServiceHandler<Server>;
+        fn handler<_Format>(server: Server) -> Self::Handler<_Format> {
             TodoServiceHandler(server)
         }
     }
@@ -71,14 +51,6 @@ mod todo_service {
         NewTodo(Todo),
     }
     impl ::trait_rpc::Request for Request {
-        fn is_streaming_response(&self) -> bool {
-            match self {
-                Self::GetTodos(..) => false,
-                Self::GetTodo(..) => false,
-                Self::NewTodo(..) => false,
-            }
-        }
-
         fn name(&self) -> Cow<'static, str> {
             match self {
                 Self::GetTodos(..) => Cow::Borrowed("get_todos"),
@@ -125,7 +97,7 @@ mod todo_service {
     #[derive(Debug, Clone)]
     pub struct TodoServiceHandler<_Server>(_Server);
 
-    impl<_Server: TodoServiceServer> Handler for TodoServiceHandler<_Server> {
+    impl<_Server: TodoServiceServer, _Format> Handler<_Format> for TodoServiceHandler<_Server> {
         type Rpc = TodoService;
         type Server = _Server;
 
@@ -133,21 +105,20 @@ mod todo_service {
             &self.0
         }
 
-        async fn handle(&self, request: Request) -> Response {
+        async fn handle<'a>(&'a self, request: Request, controller: &impl ConnectionController<'a, _Format>) -> Response {
             match request {
-                Request::GetTodos() => Response::GetTodos(self.0.get_todos().await),
-                Request::GetTodo(name) => Response::GetTodo(self.0.get_todo(name).await),
-                Request::NewTodo(todo) => Response::NewTodo(self.0.new_todo(todo).await),
-                _ => panic!("This is a streaming method, must call handle_stream_response"),
-            }
-        }
-        async fn handle_stream_response<'a, S: Sink<Response, Error = StreamError> + Send + 'a>(
-            &'a self,
-            request: Request,
-            sink: S,
-        ) {
-            match request {
-                _ => panic!("This is not a streaming method, must call handle"),
+                Request::GetTodos() => {
+                    let value = self.0.get_todos().await;
+                    Response::GetTodos(value)
+                },
+                Request::GetTodo(name) => {
+                    let value = self.0.get_todo(name).await;
+                    Response::GetTodo(value)
+                },
+                Request::NewTodo(todo) => {
+                    let value = self.0.new_todo(todo).await;
+                    Response::NewTodo(value)
+                },
             }
         }
     }
@@ -156,66 +127,35 @@ mod todo_service {
     ///
     /// This is the async client for the service, it produces requests from method calls
     /// (including chained method calls) and sends the requests with the given
-    /// [transport](::trait_rpc::AsyncClient) before returning the response
+    /// [transport](::trait_rpc::Client) before returning the response
     ///
-    /// The return value is always wrapped in a result: `Result<T, _Client::Error>` where `T` is the service return value
-    #[derive(Debug, Copy, Clone)]
-    pub struct TodoServiceAsyncClient<_Client>(_Client);
+    /// The return value is always wrapped in a result: `Result<T, ClientError<_Conn::SendError>>` where `T` is the service return value
+    #[derive(Clone)]
+    pub struct TodoServiceClient<_Conn, _Format>(Client<_Conn, _Format>);
 
     #[allow(clippy::future_not_send)]
-
-    impl<_Client: AsyncClient<Request, Response>> TodoServiceAsyncClient<_Client> {
+    impl<_Conn, _Format> TodoServiceClient<_Conn, _Format>
+    where
+        _Conn: Connection + MaybeSend + 'static,
+        _Format: Format<Response, Request>
+    {
         /// Get a list of to-do items
-        pub async fn get_todos(&self) -> Result<Vec<Todo>, _Client::Error> {
+        pub async fn get_todos(&self) -> Result<Vec<Todo>, ClientError<_Conn::SendError>> {
             match self.0.send(Request::GetTodos()).await? {
                 Response::GetTodos(value) => Ok(value),
                 other => Err(WrongResponseType::new("get_todos", other.fn_name()).into()),
             }
         }
         /// Get a to-do item by name, returns None if no to-do item with the given name exists
-        pub async fn get_todo(&self, name: String) -> Result<Option<Todo>, _Client::Error> {
+        pub async fn get_todo(&self, name: String) -> Result<Option<Todo>, ClientError<_Conn::SendError>> {
             match self.0.send(Request::GetTodo(name)).await? {
                 Response::GetTodo(value) => Ok(value),
                 other => Err(WrongResponseType::new("get_todo", other.fn_name()).into()),
             }
         }
         /// Create a new to-do item
-        pub async fn new_todo(&self, todo: Todo) -> Result<(), _Client::Error> {
+        pub async fn new_todo(&self, todo: Todo) -> Result<(), ClientError<_Conn::SendError>> {
             match self.0.send(Request::NewTodo(todo)).await? {
-                Response::NewTodo(value) => Ok(value),
-                other => Err(WrongResponseType::new("new_todo", other.fn_name()).into()),
-            }
-        }
-    }
-
-    /// A service for managing to-do items
-    ///
-    /// This is the blocking client for the service, it produces requests from method calls
-    /// (including chained method calls) and sends the requests with the given
-    /// [transport](::trait_rpc::AsyncClient) before returning the response
-    ///
-    /// The return value is always wrapped in a result: `Result<T, _Client::Error>` where `T` is the service return value
-    #[derive(Debug, Copy, Clone)]
-    pub struct TodoServiceBlockingClient<_Client>(_Client);
-
-    impl<_Client: BlockingClient<Request, Response>> TodoServiceBlockingClient<_Client> {
-        /// Get a list of to-do items
-        pub fn get_todos(&self) -> Result<Vec<Todo>, _Client::Error> {
-            match self.0.send(Request::GetTodos())? {
-                Response::GetTodos(value) => Ok(value),
-                other => Err(WrongResponseType::new("get_todos", other.fn_name()).into()),
-            }
-        }
-        /// Get a to-do item by name, returns None if no to-do item with the given name exists
-        pub fn get_todo(&self, name: String) -> Result<Option<Todo>, _Client::Error> {
-            match self.0.send(Request::GetTodo(name))? {
-                Response::GetTodo(value) => Ok(value),
-                other => Err(WrongResponseType::new("get_todo", other.fn_name()).into()),
-            }
-        }
-        /// Create a new to-do item
-        pub fn new_todo(&self, todo: Todo) -> Result<(), _Client::Error> {
-            match self.0.send(Request::NewTodo(todo))? {
                 Response::NewTodo(value) => Ok(value),
                 other => Err(WrongResponseType::new("new_todo", other.fn_name()).into()),
             }

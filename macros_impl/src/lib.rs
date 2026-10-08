@@ -2,7 +2,7 @@ use crate::parse::Parser;
 use proc_macro2::{Ident};
 use quote::ToTokens;
 use syn::parse::{Parse, ParseStream};
-use syn::{parse_quote, Expr, Generics, ItemTrait, LitStr, PatType, Path, Token, Type, Visibility};
+use syn::{parse_quote, Expr, Generics, ItemTrait, LitStr, Path, Token, Type, Visibility};
 use syn::spanned::Spanned;
 
 mod parse;
@@ -31,14 +31,17 @@ struct Rpc {
 struct Method {
     docs: Vec<Expr>,
     name: Ident,
-    args: Vec<PatType>,
-    ret: ReturnType,
+    args: Vec<(Ident, Param)>,
+    ret: Param,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum ReturnType {
+enum Param {
     Simple(Type),
-    Streaming(Type),
+    Stream(Type),
+    Option(Box<Self>),
+    Result(Box<Self>, Box<Self>),
+    Tuple(Vec<Self>),
 }
 
 /// This contains any args in the attribute macro invocation that may affect parsing

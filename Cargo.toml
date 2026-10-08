@@ -22,30 +22,35 @@ pedantic = { level = "warn" }
 nursery = { level = "warn" }
 
 [features]
+single-thread = []
 axum = ["dep:axum", "dep:tower"]
-browser = ["dep:web-sys", "dep:wasm-bindgen-futures"]
-reqwest-blocking = ["dep:reqwest", "reqwest/blocking"]
-reqwest = ["dep:reqwest"]
-websocket-client = ["dep:tokio-tungstenite", "dep:tokio", "dep:web-sys", "dep:wasm-bindgen-futures", "gloo-net"]
-websocket-server = ["axum?/ws", "async-executor"]
+browser = ["dep:web-sys", "dep:wasm-bindgen-futures", "single-thread", "dep:gloo-net"]
+tokio_tungstenite = ["dep:tokio-tungstenite", "dep:tokio"]
+
+# Formats
 json = ["dep:serde_json"]
 browser-json = ["dep:serde-wasm-bindgen", "dep:web-sys", "dep:wasm-bindgen-futures"]
 cbor = ["dep:ciborium"]
-__test = ["axum", "reqwest", "reqwest-blocking", "json", "cbor", "websocket-client", "dep:tokio", "websocket-server"]
-__wasm_test = ["reqwest", "json", "cbor", "browser", "browser-json", "websocket-client"]
+
+# Internal helper features for CI/CD, defined in a single place to avoid mistakes when adding/removeing features
+__test = ["axum", "json", "cbor", "tokio_tungstenite", "dep:tokio"]
+__wasm_test = ["json", "cbor", "browser", "browser-json", "tokio_tungstenite"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
-reqwest = { version = "0.12.24", features = ["json"], optional = true }
 thiserror = "2.0.17"
-axum = { version = "0.8.7", optional = true, features = ["macros"]}
+axum = { version = "0.8.7", optional = true, features = ["ws"]}
 tower = { version = "0.5.2", optional = true }
 macros = { package = "trait-rpc-macros", path = "macros" }
 futures = { version = "0.3.31", features = ["unstable", "bilock"] }
 bon = "3.8.1"
 tracing = "0.1.44"
 pin-project = "1.1.13"
-async-executor = { version = "1.13.3", optional = true }
+async-executor = { version = "1.13.3" }
+derive_more = { version = "2.1.1", features = ["from", "display"] }
+whirlwind = { version = "0.1.1" }
+async-channel = "2.5.0"
+async-lock = "3.4.2"
 
 # Formats
 serde_json = { version = "1.0.145", optional = true }
@@ -62,8 +67,8 @@ optional = true
 features = ["Window", "Request", "Response", "RequestInit", "RequestMode", "ReadableStream", "Headers"]
 
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
-tokio-tungstenite = { version = "0.28.0", optional = true }
 tokio = { version = "1.48.0", features = ["full"], optional = true }
+tokio-tungstenite = { version = "0.28.0", optional = true }
 
 [dev-dependencies]
 derive_more = { version = "2.1.1", features = ["full"] }
@@ -71,35 +76,31 @@ axum-extra = { version = "0.12.5", features = ["typed-header"] }
 async-executor = "1.13.3"
 tracing = { version = "0.1.44", features = ["log"] }
 simple_logger = "5.2.0"
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+
+[target.'cfg(not(target_arch="wasm32"))'.dev-dependencies]
+axum = { version = "0.8.7", features = ["ws", "macros"]}
+
+[build-dependencies]
+cfg_aliases = "0.2.2"
 
 [[example]]
 name = "todo_client"
-required-features = ["reqwest", "__test"]
-
-[[example]]
-name = "websocket_client"
-required-features = ["websocket-client"]
-
-[[example]]
-name = "blocking_client"
-required-features = ["reqwest-blocking"]
+required-features = ["__test"]
 
 [[example]]
 name = "wasm_client"
-required-features = ["browser", "browser-json"]
+required-features = ["__wasm_test"]
 
 [[example]]
 name = "todo_server"
-required-features = ["axum"]
+required-features = ["__test"]
 
 [[example]]
 name = "resources_server"
-required-features = ["axum"]
-
-[[test]]
-name = "websocket"
 required-features = ["__test"]
 
 [[test]]
-name = "http"
+test = false
+name = "websocket"
 required-features = ["__test"]

@@ -1,24 +1,17 @@
 #![doc = include_str!("./examples.md")]
 
-use trait_rpc::client::reqwest::Reqwest;
 use trait_rpc::format::json::Json;
-use trait_rpc::{client, Rpc};
+use trait_rpc::{Rpc};
+use trait_rpc::client::websocket::new_websocket_transport;
 
 include!("traits/todo.rs");
 
 #[tokio::main]
 async fn main() {
-    let client = TodoService::async_client(
-        client::builder()
-            .non_blocking()
-            .transport(
-                Reqwest::builder()
-                    .url("http://localhost:8080/api/todo")
-                    .build()
-            )
-            .format(&Json)
-            .build()
-    );
+    let websocket = new_websocket_transport("ws://localhost:8080/api/todo", Json, ||{
+        println!("Client closed");
+    }).await.unwrap();
+    let client = TodoService::client(websocket);
     for todo in client.get_todos().await.expect("get_todos failed") {
         println!("{todo:?}");
     }

@@ -1,30 +1,108 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
+#![deny(clippy::disallowed_types)]
 
 use std::borrow::Cow;
 use std::fmt::Debug;
-pub use serde;
-pub use futures;
+use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU32, Ordering};
+use thiserror::Error;
 
-pub mod server;
 pub mod client;
-pub mod format;
-#[cfg(any(feature = "websocket-server", feature = "websocket-client"))]
-pub mod stream;
 mod ext;
+pub mod format;
+pub mod message;
+pub mod server;
+mod shard_map;
 
+pub use crate::client::{Client, RpcError};
 pub use macros::rpc;
-pub use crate::client::{AsyncTransport, BlockingTransport, RpcError};
-pub use server::Handler;
-use crate::client::{AsyncClient, BlockingClient};
+
+use crate::__macro_imports::Stream;
+use crate::client::Connection;
+use crate::format::{ReadFormat, WriteFormat};
+use crate::message::StreamID;
+pub use maybe_send::*;
+pub use serde;
+
+#[doc(hidden)]
+pub mod __macro_imports {
+    pub use crate::{
+        ConnectionController, Handler, MaybeSend, MaybeSync, Rpc, RpcWithServer, StreamError,
+        client::{Client, ClientError, Connection, WrongResponseType},
+        format::{Format, ReadFormat, WriteFormat},
+        message::StreamID,
+    };
+    pub use ::{
+        futures::sink::{Sink, SinkExt},
+        futures::stream::{Stream, StreamExt},
+        serde::{Deserialize, Serialize},
+        std::borrow::Cow,
+        std::convert::Infallible,
+        std::marker::PhantomData,
+    };
+}
+
+#[cfg(send)]
+mod maybe_send {
+    use futures::Stream;
+    use std::pin::Pin;
+
+    pub use std::sync::Arc as Rc;
+
+    /// Requires Send bound unless `"single-thread"` feature is active
+    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
+    ///
+    /// Currently, Send bounds **are** required where relevant
+    pub trait MaybeSend: Send {}
+    impl<T: Send> MaybeSend for T {}
+
+    /// Requires Sync bound unless `"single-thread"` feature is active
+    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
+    ///
+    /// Currently, Send bounds **are** required where relevant
+    pub trait MaybeSync: Sync {}
+    impl<T: Sync> MaybeSync for T {}
+
+    /// A Boxed Stream which can run on multiple threads
+    pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
+    /// Am executor which can run futures on multiple threads
+    ///
+    /// This does not spawn futures, instead the executor itself can be shared between threads
+    pub type Executor<'a> = async_executor::Executor<'a>;
+}
+
+#[cfg(nosend)]
+mod maybe_send {
+    use futures::Stream;
+    use std::pin::Pin;
+
+    pub use std::rc::Rc;
+
+    /// Requires Send bound unless `"single-thread"` feature is active
+    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
+    ///
+    /// Currently, Send bounds **are not** required where relevant
+    pub trait MaybeSend {}
+    impl<T> MaybeSend for T {}
+
+    /// Requires Sync bound unless `"single-thread"` feature is active
+    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
+    ///
+    /// Currently, Send bounds **are not** required where relevant
+    pub trait MaybeSync {}
+    impl<T> MaybeSync for T {}
+    /// A Boxed Stream which can only run on a single thread
+    pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + 'a>>;
+    /// Am executor which can run futures on a single thread
+    pub type Executor<'a> = async_executor::LocalExecutor<'a>;
+}
 
 /// This is a trait for the main entry point of the RPC, it describes the types for client,
 /// request and response
 pub trait Rpc: Sized {
     /// This is the async client type used for accessing the RPC service
-    type AsyncClient<T: AsyncClient<Self::Request, Self::Response>>;
-    /// This is the blocking client type used for accessing the RPC service
-    type BlockingClient<T: BlockingClient<Self::Request, Self::Response>>;
+    type Client<T: Connection, F>;
     /// This is the request type accepted by the service
     type Request: Request + Debug + 'static;
     /// This is the response type returned by the service
@@ -32,14 +110,9 @@ pub trait Rpc: Sized {
 
     /// Create a new asynchronous client, using the given underlying transport, if you wish to re-use the
     /// client for multiple calls, ensure you pass a copyable transport (eg: a reference)
-    fn async_client<C>(transport: C) -> Self::AsyncClient<C>
+    fn client<C, F>(client: Client<C, F>) -> Self::Client<C, F>
     where
-        C: AsyncClient<Self::Request, Self::Response>;
-    /// Create a new blocking client, using the given underlying transport, if you wish to re-use the
-    /// client for multiple calls, ensure you pass a copyable transport (eg: a reference)
-    fn blocking_client<C>(transport: C) -> Self::BlockingClient<C>
-    where
-        C: BlockingClient<Self::Request, Self::Response>;
+        C: Connection;
 
     /// Returns the name of this service
     fn service_name() -> &'static str;
@@ -48,15 +121,87 @@ pub trait Rpc: Sized {
 /// Represents a [Rpc] which can be served by `Server`
 pub trait RpcWithServer<Server>: Rpc {
     /// The handler type for this server
-    type Handler: Handler<Rpc = Self, Server = Server>;
+    type Handler<F>;
     /// Create a new handler from the given server
-    fn handler(server: Server) -> Self::Handler;
+    fn handler<F>(server: Server) -> Self::Handler<F>
+    where
+        Self::Handler<F>: Handler<F, Rpc = Self, Server = Server>;
 }
 
 /// Defines a RPC request
 pub trait Request {
-    /// Returns true if this request has a streaming response
-    fn is_streaming_response(&self) -> bool;
     /// Returns the name of this method (for logging purposes)
     fn name(&self) -> Cow<'static, str>;
+}
+
+#[derive(Debug)]
+struct Series<T>(AtomicU32, PhantomData<T>);
+
+impl<T> Default for Series<T> {
+    fn default() -> Self {
+        Self(AtomicU32::new(0), PhantomData)
+    }
+}
+
+impl<T: From<u32>> Series<T> {
+    fn next(&self) -> T {
+        self.0.fetch_add(1, Ordering::Relaxed).into()
+    }
+}
+
+/// This trait describes a handler which takes a request and calls the appropriate method of
+/// an underlying server implementation, then builds and returns the response
+///
+/// It also handles converting [`StreamID`]s into [`impl Stream`](Stream)
+///
+/// Implementations are generated by the `#[rpc]` macro
+pub trait Handler<F>: MaybeSend {
+    /// The Rpc service served by this handler
+    type Rpc: Rpc;
+    /// Underlying server type
+    type Server;
+
+    /// Get underlying server
+    fn server(&self) -> &Self::Server;
+
+    /// takes the request and returns a response, see [trait documentation](Self) for details
+    fn handle<'a>(
+        &'a self,
+        request: <Self::Rpc as Rpc>::Request,
+        stream_handler: &impl ConnectionController<'a, F>,
+    ) -> impl Future<Output = <Self::Rpc as Rpc>::Response> + MaybeSend;
+}
+
+/// Link to the connection to manage streams
+pub trait ConnectionController<'a, F>: MaybeSend + MaybeSync {
+    /// Creates a new stream which, when polled will send a Poll frame on the connection and wait
+    /// for the response
+    fn receiving_stream<I: MaybeSend>(
+        &self,
+        id: StreamID,
+    ) -> impl Future<Output = impl Stream<Item = I> + MaybeSend>
+    where
+        F: ReadFormat<I>;
+
+    /// Registers the given stream such that when a relevant Poll frame is received on the
+    /// connection, this stream is polled, returns the corresponding [`StreamId`] which should be
+    /// sent to the other end of the connection in a response
+    fn sending_stream<I>(
+        &self,
+        stream: impl Stream<Item = I> + MaybeSend + MaybeSync + 'a,
+    ) -> impl Future<Output = StreamID> + MaybeSend
+    where
+        F: WriteFormat<I>,
+        I: MaybeSend + MaybeSync + 'static;
+}
+
+#[derive(Debug, Error)]
+/// An error when trying to send a value to a stream
+pub enum StreamError {
+    #[error("The output stream is closed")]
+    /// The stream is closed
+    Closed,
+    #[error("The send failed with an internal error: {0}")]
+    /// The value could not be sent, the contained string is the error message
+    SendFailed(String),
 }

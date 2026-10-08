@@ -1,10 +1,7 @@
+use crate::{Args, Method, Param, Rpc};
 use quote::ToTokens;
-use crate::{Args, Method, Rpc};
-use syn::{
-    Attribute, Expr, FnArg, GenericArgument, ItemTrait, Meta, MetaNameValue, PathArguments,
-    PathSegment, ReturnType, TraitItem, TraitItemFn, Type, TypeParamBound, parse_quote,
-};
 use syn::spanned::Spanned;
+use syn::{parse_quote, Attribute, Expr, FnArg, GenericArgument, ItemTrait, Meta, MetaNameValue, PatIdent, PathArguments, PathSegment, ReturnType, TraitItem, TraitItemFn, Type, TypeParamBound, Pat};
 
 /// This contains any args in the attribute macro invocation that may affect parsing
 // There are no such args for now, but we will keep this just in case tha changes
@@ -59,7 +56,12 @@ impl Parser {
                 FnArg::Receiver(s) => {
                     return Err(syn::Error::new_spanned(s, "self receiver is not supported"));
                 }
-                FnArg::Typed(arg) => args.push(arg.clone()),
+                FnArg::Typed(arg) => {
+                    let Pat::Ident(PatIdent { ident, .. }) = &*arg.pat else {
+                        return Err(syn::Error::new(arg.pat.span(), "pattern arguments are not supported"));
+                    };
+                    args.push((ident.clone(), Param::try_from(&*arg.ty)?));
+                },
             }
         }
         let ret = self.return_type(item.sig.output)?;
@@ -72,28 +74,11 @@ impl Parser {
         })
     }
 
-    fn return_type(&self, output: ReturnType) -> syn::Result<super::ReturnType> {
+    fn return_type(&self, output: ReturnType) -> syn::Result<Param> {
         match output {
-            ReturnType::Default => Ok(super::ReturnType::Simple(parse_quote! {()})),
+            ReturnType::Default => Ok(Param::Simple(parse_quote! {()})),
             ReturnType::Type(_, ty) => {
-                if let Type::ImplTrait(ty) = &*ty {
-                    if ty.bounds.len() == 1 &&
-                        let TypeParamBound::Trait(t) = &ty.bounds[0] &&
-                        t.path.segments.len() == 1
-                    {
-                        let PathSegment { ident, arguments } = &t.path.segments[0];
-                        if ident == "Stream"
-                            && let PathArguments::AngleBracketed(args) = arguments
-                            && args.args.len() == 1
-                            && let GenericArgument::Type(ty) = &args.args[0]
-                        {
-                            return Ok(super::ReturnType::Streaming(ty.clone()));
-                        }
-                    }
-                    Err(syn::Error::new(ty.span(), format!("unsupported impl return: {}", ty.to_token_stream())))
-                } else {
-                    Ok(super::ReturnType::Simple(*ty))
-                }
+                Param::try_from(ty.as_ref())
             }
         }
     }
@@ -111,34 +96,94 @@ fn docs(attr: &Attribute) -> Option<Expr> {
     }
 }
 
+impl TryFrom<&Type> for Param {
+    type Error = syn::Error;
+    fn try_from(ty: &Type) -> Result<Self, Self::Error> {
+        let type_span = ty.span();
+        match &ty {
+            Type::ImplTrait(ty) => {
+                if ty.bounds.len() == 1 &&
+                    let TypeParamBound::Trait(t) = &ty.bounds[0] &&
+                    t.path.segments.len() == 1
+                {
+                    let PathSegment { ident, arguments } = &t.path.segments[0];
+                    if ident == "Stream" {
+                        if let PathArguments::AngleBracketed(args) = arguments
+                            && args.args.len() == 1
+                            && let GenericArgument::AssocType(ty) = &args.args[0]
+                            && ty.ident == "Item"
+                        {
+                            Ok(Self::Stream(ty.ty.clone()))
+                        } else {
+                            Err(syn::Error::new(type_span, "Stream must declare Item type as: `impl Stream<Item = <item>>`"))
+                        }
+                    } else {
+                        Err(syn::Error::new(type_span, "unsupported impl type"))
+                    }
+                } else {
+                    Err(syn::Error::new(type_span, format!("unsupported impl type: {}", ty.to_token_stream())))
+                }
+            }
+            Type::Tuple(tuple) => {
+                Ok(Self::Tuple(tuple.elems.iter().map(Self::try_from).collect::<Result<_, _>>()?))
+            }
+            Type::Path(ty) => {
+                Ok(if ty.path.segments.len() == 1 &&
+                    ty.path.segments[0].ident == "Option" &&
+                    let PathArguments::AngleBracketed(args) = &ty.path.segments[0].arguments &&
+                    args.args.len() == 1 &&
+                    let GenericArgument::Type(ty) = &args.args[0]
+                {
+                    Self::Option(Box::new(Self::try_from(ty)?))
+                } else if ty.path.segments.len() == 1 &&
+                    ty.path.segments[0].ident == "Result" &&
+                    let PathArguments::AngleBracketed(args) = &ty.path.segments[0].arguments &&
+                    args.args.len() == 2 &&
+                    let GenericArgument::Type(ok) = &args.args[0] &&
+                    let GenericArgument::Type(err) = &args.args[1]
+                {
+                    Self::Result(Box::new(Self::try_from(ok)?), Box::new(Self::try_from(err)?))
+                } else {
+                    Self::Simple(Type::Path(ty.clone()))
+                })
+            }
+            Type::Paren(ty) => Self::try_from(ty.elem.as_ref()),
+            _ => {
+                Err(syn::Error::new(ty.span(), format!("unsupported type: {}", ty.to_token_stream())))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::parse::Parser;
+    use crate::Param;
     use syn::parse_quote;
-    use syn::punctuated::Punctuated;
-    use syn::token::Paren;
-    use syn::{ReturnType, Type, TypeTuple};
+    use syn::Type;
 
-    macro_rules! return_type_tests {
+    macro_rules! param_type_tests {
         ($($name:ident: $output:expr => {$($input:tt)*}),*) => {
             $(
             #[test]
             fn $name() {
-                test_return_type(parse_quote!($($input)*), $output);
+                test_param_type(parse_quote!($($input)*), $output);
             }
             )*
         };
     }
 
-    return_type_tests![
-        unit: crate::ReturnType::Simple(Type::Tuple(TypeTuple { paren_token: Paren::default(),elems: Punctuated::default(),})) => {},
-        simple: crate::ReturnType::Simple(Type::Path(parse_quote!(String))) => {-> String}
+    param_type_tests![
+        unit: Param::Tuple(vec![]) => {()},
+        simple: Param::Simple(Type::Path(parse_quote!(String))) => {String},
+        option: Param::Option(Box::new(Param::Simple(Type::Path(parse_quote!(String))))) => {Option<String>},
+        result: Param::Result(Box::new(Param::Simple(Type::Path(parse_quote!(String)))), Box::new(Param::Simple(Type::Path(parse_quote!(Error))))) => {Result<String, Error>},
+        stream_tuple: Param::Tuple(vec![Param::Simple(Type::Path(parse_quote!(String))), Param::Stream(Type::Path(parse_quote!(u8)))]) => {(String, impl Stream<Item=u8>)},
+        stream_result_option: Param::Result(Box::new(Param::Option(Box::new(Param::Stream(Type::Path(parse_quote!(bool)))))), Box::new(Param::Simple(Type::Path(parse_quote!(Error))))) => {Result<Option<impl Stream<Item=bool>>, Error>}
     ];
 
     #[allow(clippy::needless_pass_by_value)]
-    fn test_return_type(input: ReturnType, expected: crate::ReturnType) {
-        let parser = Parser;
-        let output = parser.return_type(input).expect("failed to parse input");
+    fn test_param_type(input: Type, expected: Param) {
+        let output: Param = (&input).try_into().expect("failed to parse input");
         assert_eq!(output, expected);
     }
 }

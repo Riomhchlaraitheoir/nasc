@@ -1,15 +1,15 @@
 //! Defines a websocket client
 
 use crate::format::IsFormat;
-use crate::stream::client::StreamClient;
 use futures::{SinkExt, StreamExt};
-use futures::channel::mpsc::unbounded;
+use async_channel::{RecvError};
 use futures::future::{select, Either};
 use tokio_tungstenite::tungstenite::{ClientRequestBuilder, Error, Message};
-pub use tokio_tungstenite::tungstenite::Error as WebsocketError;
 use tokio_tungstenite::{connect_async};
 use tracing::{error, info, info_span, Instrument};
 use std::pin::pin;
+use crate::{MaybeSend, MaybeSync};
+use crate::client::{Client, ChannelConnection};
 
 /// Create a new websocket transport layer to the given URL
 ///
@@ -19,31 +19,34 @@ use std::pin::pin;
     clippy::missing_panics_doc,
     reason = "panic in theoretically unreachable"
 )]
-pub async fn new_websocket_transport(
+pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + MaybeSend + MaybeSync + 'static>(
     url: impl AsRef<str>,
-    format: impl IsFormat + 'static,
-    on_close: impl FnOnce() + Send + 'static
-) -> Result<StreamClient, WebsocketError> {
+    format: Format,
+    on_close: OnClose
+) -> Result<Client<ChannelConnection, Format>, Error> {
     let (mut websocket, _) = connect_async(
         ClientRequestBuilder::new(url.as_ref().parse().expect("failed to parse url"))
             .with_sub_protocol(format.subprotocol()),
     )
     .await?;
-    let (mut request_sender, request_receiver) = unbounded();
-    let (response_sender, mut response_receiver) = unbounded();
-    let (client, job) = StreamClient::new(response_sender, request_receiver, format);
+    let (request_sender, request_receiver) = async_channel::bounded(10);
+    let (response_sender, response_receiver) = async_channel::bounded(10);
+    let conn = ChannelConnection { response_sender, request_receiver };
+    let (client, job) = Client::new(conn, format);
     tokio::spawn(async move {
+        // let mut response_receiver = pin!(response_receiver);
         loop {
             let next_request = websocket.next();
             let next_request = pin!(next_request);
-            let next_response = response_receiver.next();
+            let next_response = response_receiver.recv();
             let next_response = pin!(next_response);
             match select(next_response, next_request).await {
-                Either::Left((None, _)) => {
+                Either::Left((Err(error), _)) => {
+                    let _: RecvError = error;
                     on_close();
                     break
                 },
-                Either::Left((Some(bytes), _)) => {
+                Either::Left((Ok(bytes), _)) => {
                     let result = websocket.send(Message::binary(bytes)).await;
                     if let Err(error) = result {
                         error!("failed to send response, closing websocket: {error}");

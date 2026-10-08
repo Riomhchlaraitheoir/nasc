@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use thiserror::Error;
 use web_sys::js_sys;
-use crate::format::{Format, IsFormat};
+use crate::format::{Format, IsFormat, ReadFormat, WriteFormat};
 use serde_wasm_bindgen::Serializer;
 
 const CONTENT_TYPE: & str = "application/json";
@@ -34,14 +34,24 @@ impl IsFormat for BrowserJson {
 impl<Read, Write> Format<Read, Write> for BrowserJson
 where Read: DeserializeOwned, Write: Serialize
 {
+}
+
+impl<Read> ReadFormat<Read> for BrowserJson
+where Read: DeserializeOwned
+{
     fn read(&self, json: &[u8]) -> Result<Read, Box<dyn StdError + Send>> {
         Self::read_impl(json).map_err(|e| Box::new(e) as Box<dyn StdError + Send>)
     }
+}
 
+impl<Write> WriteFormat<Write> for BrowserJson
+where Write: Serialize
+{
     fn write(&self, value: Write) -> Result<Vec<u8>, Box<dyn StdError + Send>> {
         Self::write_impl(value).map_err(|e| Box::new(e) as Box<dyn StdError + Send>)
     }
 }
+
 
 impl BrowserJson {
     fn read_impl<T: DeserializeOwned>(json: &[u8]) -> Result<T, Error> {
