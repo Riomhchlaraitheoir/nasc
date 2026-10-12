@@ -1,9 +1,9 @@
-use crate::parse::Parser;
-use proc_macro2::{Ident};
+use crate::parse::parse_rpc;
+use proc_macro2::Ident;
 use quote::ToTokens;
 use syn::parse::{Parse, ParseStream};
-use syn::{parse_quote, Expr, Generics, ItemTrait, LitStr, Path, Token, Type, Visibility};
 use syn::spanned::Spanned;
+use syn::{Expr, ItemTrait, LitStr, Path, Token, Type, Visibility, WherePredicate, parse_quote};
 
 mod parse;
 
@@ -14,14 +14,15 @@ mod output;
 /// # Errors
 /// Can return a [`syn::Error`] if it fails to parse the input or rejects some part of the input
 pub fn rpc(args: Args, input: ItemTrait) -> syn::Result<impl ToTokens> {
-    Parser{}.rpc(input, args)
+    parse_rpc(input, args)
 }
 
 struct Rpc {
     args: Args,
     docs: Vec<Expr>,
     vis: Visibility,
-    generics: Generics,
+    generic_types: Vec<Ident>,
+    generic_bounds: Vec<WherePredicate>,
     name: Ident,
     methods: Vec<Method>,
 }

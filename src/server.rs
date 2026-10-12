@@ -209,7 +209,7 @@ where
 
     async fn raw_sending_stream(
         &self,
-        stream: impl Stream<Item = Vec<u8>> + MaybeSend + MaybeSync + 'a,
+        stream: impl Stream<Item = Vec<u8>> + MaybeSend + 'a,
     ) -> StreamID {
         let id: StreamID = self.stream_ids.next();
         self.outgoing_streams.insert(id, Box::pin(stream)).await;
@@ -242,7 +242,7 @@ where
 
     async fn sending_stream<I>(
         &self,
-        stream: impl Stream<Item = I> + MaybeSend + MaybeSync + 'a,
+        stream: impl Stream<Item = I> + MaybeSend + 'a,
     ) -> StreamID
     where
         F: WriteFormat<I>,

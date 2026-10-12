@@ -5,17 +5,16 @@
 )]
 
 use crate::format::{Format, ReadFormat, WriteFormat};
-use futures::{Stream, StreamExt};
-use std::error::Error;
-use std::fmt::{Debug, Display};
-use std::future::ready;
 use async_channel::{Receiver, Sender};
 use futures::channel::oneshot;
 use futures::channel::oneshot::Canceled;
 use futures::stream::unfold;
+use futures::{Stream, StreamExt};
+use std::error::Error;
+use std::fmt::{Debug, Display};
+use std::future::ready;
 use thiserror::Error;
 use tracing::{error, warn};
-use whirlwind::ShardMap;
 
 #[cfg(all(feature = "browser", not(target_arch = "wasm32")))]
 compile_error!("browser feature is only available for wasm32 target arch");
@@ -30,8 +29,9 @@ pub mod wasm_websocket;
 #[cfg(wasm_websocket)]
 pub use wasm_websocket as websocket;
 
-use crate::{BoxStream, Executor, MaybeSend, MaybeSync, Rc, Series};
 use crate::message::{ConnectionError, ConnectionMessage, RequestID, StreamID};
+use crate::{BoxStream, Executor, MaybeSend, MaybeSync, Rc, Series};
+use crate::shard_map::ShardMap;
 
 /// This is a error that the client may return after a request
 #[derive(Debug, Error)]
@@ -130,16 +130,18 @@ impl MaybeWrongResponse for WrongResponseType {
     }
 }
 
-
 /// Represents the underlying connection
 pub trait Connection: MaybeSync {
     /// An error that can occur when sending on this connection
-    type SendError: Debug + Display + MaybeSend + 'static;
+    type SendError: Debug + Display + MaybeSend + MaybeSync + 'static;
     /// An error that can occur when reading from this connections
-    type RecvError: Debug + Display + MaybeSend + 'static;
+    type RecvError: Debug + Display + MaybeSend + MaybeSync + 'static;
 
     /// Send the given raw bytes to the connection
-    fn send(&self, value: Vec<u8>) -> impl Future<Output = Result<(), Self::SendError>> + MaybeSend;
+    fn send(
+        &self,
+        value: Vec<u8>,
+    ) -> impl Future<Output = Result<(), Self::SendError>> + MaybeSend + MaybeSync;
     /// Read raw bytes from the connection
     fn recv(&self) -> impl Future<Output = Result<Vec<u8>, Self::RecvError>> + MaybeSend;
 }
@@ -151,13 +153,14 @@ pub trait Connection: MaybeSync {
 /// NOTE: This will only work as long as [receive](Self::receive) is regularly polled
 struct ConnectionManager<Conn> {
     conn: Rc<Conn>,
-    senders: ShardMap<RequestID, oneshot::Sender<Result<Vec<u8>, HandleError>>>,
-    outgoing_streams:
-        ShardMap<StreamID, BoxStream<'static, Vec<u8>>>,
-    polled_incoming_streams: ShardMap<StreamID, oneshot::Sender<Option<Vec<u8>>>>,
+    senders: Rc<ShardMap<RequestID, ResponseWaiter>>,
+    outgoing_streams: Rc<ShardMap<StreamID, BoxStream<'static, Vec<u8>>>>,
+    polled_incoming_streams: Rc<ShardMap<StreamID, oneshot::Sender<Option<Vec<u8>>>>>,
     request_ids: Rc<Series<RequestID>>,
     stream_ids: Rc<Series<StreamID>>,
 }
+
+type ResponseWaiter = oneshot::Sender<Result<Vec<u8>, HandleError>>;
 
 impl<Conn> Clone for ConnectionManager<Conn> {
     fn clone(&self) -> Self {
@@ -179,9 +182,9 @@ where
     pub fn new(conn: Conn) -> Self {
         Self {
             conn: Rc::new(conn),
-            senders: ShardMap::new(),
-            outgoing_streams: ShardMap::new(),
-            polled_incoming_streams: ShardMap::new(),
+            senders: Rc::default(),
+            outgoing_streams: Rc::default(),
+            polled_incoming_streams: Rc::default(),
             request_ids: Rc::default(),
             stream_ids: Rc::default(),
         }
@@ -192,19 +195,18 @@ where
 
         loop {
             let Ok(next) = self.conn.recv().await else {
-                break Ok(())
+                break Ok(());
             };
             let next = ConnectionMessage::parse(&next);
             let (request_id, result) = match next {
                 ConnectionMessage::ConnectionError(error) => {
                     break Err(error);
                 }
-                ConnectionMessage::Payload { request_id, payload } => {
-                    (request_id, Ok(payload))
-                }
-                ConnectionMessage::HandleError { request_id, error } => {
-                    (request_id, Err(error))
-                }
+                ConnectionMessage::Payload {
+                    request_id,
+                    payload,
+                } => (request_id, Ok(payload)),
+                ConnectionMessage::HandleError { request_id, error } => (request_id, Err(error)),
                 ConnectionMessage::StreamItem { stream_id, item } => {
                     if let Some(sender) = self.polled_incoming_streams.remove(&stream_id).await {
                         // error indicates handling function dropped stream, no longer interested
@@ -212,7 +214,7 @@ where
                     } else {
                         warn!("stream {stream_id} was not polled");
                     }
-                    continue
+                    continue;
                 }
                 ConnectionMessage::StreamPoll { stream_id } => {
                     let outgoing_streams = &self.outgoing_streams;
@@ -237,7 +239,7 @@ where
                             }
                         })
                         .detach();
-                    continue
+                    continue;
                 }
             };
             let Some(sender) = self.senders.remove(&request_id).await else {
@@ -251,7 +253,10 @@ where
     }
 
     /// Send a message on the connection
-    async fn send(&self, message: Vec<u8>) -> Result<Result<Vec<u8>, HandleError>, SendError<Conn::SendError>> {
+    async fn send(
+        &self,
+        message: Vec<u8>,
+    ) -> Result<Result<Vec<u8>, HandleError>, SendError<Conn::SendError>> {
         let request_id = self.request_ids.next();
         let message = ConnectionMessage::Payload {
             request_id,
@@ -259,16 +264,23 @@ where
         };
         let (sender, receiver) = oneshot::channel();
         self.senders.insert(request_id, sender).await;
-        self.conn.send(message.format()).await.map_err(SendError::Conn)?;
+        self.conn
+            .send(message.format())
+            .await
+            .map_err(SendError::Conn)?;
         Ok(receiver.await?)
     }
 
-    fn receiving_stream(&self, id: StreamID) -> impl Stream<Item=Vec<u8>> + MaybeSend {
+    fn receiving_stream(
+        &self,
+        id: StreamID,
+    ) -> impl Stream<Item = Vec<u8>> + MaybeSend + MaybeSync {
         unfold(id, async |id| {
             let (sender, receiver) = oneshot::channel();
             self.polled_incoming_streams.insert(id, sender).await;
 
-            let result: Result<(), _> = self.conn
+            let result: Result<(), _> = self
+                .conn
                 .send(ConnectionMessage::StreamPoll { stream_id: id }.format())
                 .await;
             if let Err(error) = result {
@@ -287,7 +299,10 @@ where
         })
     }
 
-    async fn sending_stream(&self, stream: impl Stream<Item=Vec<u8>> + MaybeSend + MaybeSync + 'static) -> StreamID {
+    async fn sending_stream(
+        &self,
+        stream: impl Stream<Item = Vec<u8>> + MaybeSend + 'static,
+    ) -> StreamID {
         let id: StreamID = self.stream_ids.next();
         self.outgoing_streams.insert(id, Box::pin(stream)).await;
         id
@@ -299,17 +314,20 @@ enum SendError<ConnError> {
     #[error("Failed to send request: {0}")]
     Conn(ConnError),
     #[error("Failed to send message: connection is closed")]
-    ConnClosed(#[from] Canceled)
+    ConnClosed(#[from] Canceled),
 }
 
 /// A client which communicates with the connection, taking care of message formatting and state management
 pub struct Client<Conn, F> {
     connection_manager: Rc<ConnectionManager<Conn>>,
-    format: F
+    format: F,
 }
 
 impl<Conn: Connection + MaybeSend + 'static, F> Client<Conn, F> {
-    pub(crate) fn new(conn: Conn, format: F) -> (Self, impl Future<Output = Result<(), ConnectionError>>) {
+    pub(crate) fn new(
+        conn: Conn,
+        format: F,
+    ) -> (Self, impl Future<Output = Result<(), ConnectionError>>) {
         let client = Self {
             connection_manager: Rc::new(ConnectionManager::new(conn)),
             format,
@@ -340,48 +358,57 @@ where
     ///
     /// # Errors
     /// Returns an error if there was a connection error or an error in handling the request
-    pub async fn send<Response, Request>(&self, request: Request) -> Result<Response, ClientError<Conn::SendError>>
+    pub async fn send<Response, Request>(
+        &self,
+        request: Request,
+    ) -> Result<Response, ClientError<Conn::SendError>>
     where
-        F: Format<Response, Request>
+        F: Format<Response, Request>,
     {
         let request = self.format.write(request).map_err(ClientError::Serialise)?;
         let response = self.connection_manager.send(request).await??;
-        let response = self.format.read(&response).map_err(ClientError::Deserialise)?;
+        let response = self
+            .format
+            .read(&response)
+            .map_err(ClientError::Deserialise)?;
         Ok(response)
     }
 
     /// Create a new stream, streaming values from the underlying connection
     #[allow(clippy::unused_async, reason = "Consistency and forward compatability")]
-    pub async fn receiving_stream<I: Send + Sync>(&self, id: StreamID) -> impl Stream<Item=I>
+    pub async fn receiving_stream<I: Send + Sync>(&self, id: StreamID) -> impl Stream<Item = I>
     where
-        F: ReadFormat<I>
+        F: ReadFormat<I>,
     {
-        self.connection_manager.receiving_stream(id).filter_map(async |bytes| {
-            match self.format.read(&bytes) {
+        self.connection_manager
+            .receiving_stream(id)
+            .filter_map(async |bytes| match self.format.read(&bytes) {
                 Ok(item) => Some(item),
                 Err(error) => {
                     warn!("Failed to deserialise stream item: {error}");
                     None
                 }
-            }
-        })
+            })
     }
 
     /// Stream this stream's values to the underlying connection with the returned id
-    pub async fn sending_stream<I: Send + Sync>(&self, stream: impl Stream<Item=I> + MaybeSend + MaybeSync + 'static) -> StreamID
+    pub async fn sending_stream<I: Send + Sync>(
+        &self,
+        stream: impl Stream<Item = I> + MaybeSend + 'static,
+    ) -> StreamID
     where
-        F: WriteFormat<I>
+        F: WriteFormat<I>,
     {
         let format = self.format.clone();
-        self.connection_manager.sending_stream(stream.filter_map(move |item| {
-            match format.write(item) {
+        self.connection_manager
+            .sending_stream(stream.filter_map(move |item| match format.write(item) {
                 Ok(bytes) => ready(Some(bytes)),
                 Err(error) => {
                     warn!("Failed to serialise stream item: {error}");
                     ready(None)
                 }
-            }
-        })).await
+            }))
+            .await
     }
 }
 
@@ -430,7 +457,7 @@ impl<E> MaybeWrongResponse for ClientError<E> {
 /// Represents an underlying websocket connection
 pub struct ChannelConnection {
     response_sender: Sender<Vec<u8>>,
-    request_receiver: Receiver<Vec<u8>>
+    request_receiver: Receiver<Vec<u8>>,
 }
 
 impl Connection for ChannelConnection {

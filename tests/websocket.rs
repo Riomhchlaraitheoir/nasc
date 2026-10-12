@@ -3,7 +3,7 @@ use axum::extract::{FromRequestParts, State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use futures::{Sink, SinkExt, StreamExt};
+use futures::{Stream, StreamExt};
 use macros::rpc;
 use std::pin::pin;
 use std::sync::Arc;
@@ -13,18 +13,20 @@ use tokio::sync::{RwLock, oneshot};
 use tokio::time::{sleep, timeout};
 use tracing::log::Level;
 use tracing::{Instrument, debug, info, info_span};
-use trait_rpc::__macro_imports::Stream;
 use trait_rpc::client::websocket::new_websocket_transport;
 use trait_rpc::format::json::Json;
 use trait_rpc::server::ServerHooks;
 use trait_rpc::server::axum::{WebsocketError, handle_websocket};
-use trait_rpc::{MaybeSend, MaybeSync, Rpc, client};
+use trait_rpc::{MaybeSend, MaybeSync, Rpc};
 
 #[rpc]
 trait Service {
     fn simple_get() -> String;
     fn simple_set(value: u64);
-    fn stream() -> impl Stream<Item = u64>;
+    fn stream_out() -> impl Stream<Item = u64>;
+
+    fn stream_in(input: impl Stream<Item=u64>) -> u64;
+
 }
 
 #[derive(Default)]
@@ -46,10 +48,15 @@ impl ServiceServer for ServiceImpl {
         self.state.write().await.set_value = value;
     }
 
-    async fn stream(&self) -> impl Stream<Item = u64> + MaybeSend + MaybeSync {
+    async fn stream_out(&self) -> impl Stream<Item = u64> + MaybeSend {
         futures::stream::iter(0..10000).map(|i| {
             debug!("Sending {i}");
+            i
         })
+    }
+
+    async fn stream_in(&self, input: impl Stream<Item=u64> + MaybeSend) -> u64 {
+        input.count().await as u64
     }
 }
 
@@ -139,25 +146,25 @@ async fn websocket_test() {
     server.await.unwrap();
 }
 
-async fn test_simple_get(client: &Client) {
+async fn test_simple_get(client: &impl ServiceClient) {
     let response = client.simple_get().await;
     let response = response.expect("Failed to get response");
     assert_eq!(&response, "hello world");
 }
 
-async fn test_simple_set(client: &Client, state: &Arc<RwLock<ServerState>>) {
+async fn test_simple_set(client: &impl ServiceClient, state: &Arc<RwLock<ServerState>>) {
     client.simple_set(42).await.expect("Failed to set value");
     assert_eq!(state.read().await.set_value, 42);
 }
 
-async fn test_stream(client: &Client) {
-    let mut stream = client.stream().await.expect("Failed to set value");
+async fn test_stream(client: &impl ServiceClient) {
+    let stream = client.stream_out().await.expect("Failed to set value");
+    let mut stream = pin!(stream);
     for i in 0..10000 {
         let value = stream
             .next()
             .await
-            .expect("stream closed early")
-            .expect("failed to get value");
+            .expect("stream closed early");
         assert_eq!(i, value);
     }
 }

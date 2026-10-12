@@ -51,6 +51,7 @@ derive_more = { version = "2.1.1", features = ["from", "display"] }
 whirlwind = { version = "0.1.1" }
 async-channel = "2.5.0"
 async-lock = "3.4.2"
+pastey = "0.2.3"
 
 # Formats
 serde_json = { version = "1.0.145", optional = true }
@@ -101,6 +102,5 @@ name = "resources_server"
 required-features = ["__test"]
 
 [[test]]
-test = false
 name = "websocket"
 required-features = ["__test"]

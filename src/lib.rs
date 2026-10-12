@@ -2,10 +2,10 @@
 #![warn(missing_docs)]
 #![deny(clippy::disallowed_types)]
 
-use std::borrow::Cow;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU32, Ordering};
+use futures::Stream;
 use thiserror::Error;
 
 pub mod client;
@@ -14,34 +14,19 @@ pub mod format;
 pub mod message;
 pub mod server;
 mod shard_map;
+#[path = "macros.rs"]
+#[doc(hidden)]
+pub mod __macros;
+
+pub use pastey::paste as __paste;
 
 pub use crate::client::{Client, RpcError};
 pub use macros::rpc;
 
-use crate::__macro_imports::Stream;
-use crate::client::Connection;
 use crate::format::{ReadFormat, WriteFormat};
 use crate::message::StreamID;
 pub use maybe_send::*;
 pub use serde;
-
-#[doc(hidden)]
-pub mod __macro_imports {
-    pub use crate::{
-        ConnectionController, Handler, MaybeSend, MaybeSync, Rpc, RpcWithServer, StreamError,
-        client::{Client, ClientError, Connection, WrongResponseType},
-        format::{Format, ReadFormat, WriteFormat},
-        message::StreamID,
-    };
-    pub use ::{
-        futures::sink::{Sink, SinkExt},
-        futures::stream::{Stream, StreamExt},
-        serde::{Deserialize, Serialize},
-        std::borrow::Cow,
-        std::convert::Infallible,
-        std::marker::PhantomData,
-    };
-}
 
 #[cfg(send)]
 mod maybe_send {
@@ -65,7 +50,7 @@ mod maybe_send {
     impl<T: Sync> MaybeSync for T {}
 
     /// A Boxed Stream which can run on multiple threads
-    pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
+    pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + 'a>>;
     /// Am executor which can run futures on multiple threads
     ///
     /// This does not spawn futures, instead the executor itself can be shared between threads
@@ -101,19 +86,10 @@ mod maybe_send {
 /// This is a trait for the main entry point of the RPC, it describes the types for client,
 /// request and response
 pub trait Rpc: Sized {
-    /// This is the async client type used for accessing the RPC service
-    type Client<T: Connection, F>;
     /// This is the request type accepted by the service
     type Request: Request + Debug + 'static;
     /// This is the response type returned by the service
     type Response: Debug + 'static;
-
-    /// Create a new asynchronous client, using the given underlying transport, if you wish to re-use the
-    /// client for multiple calls, ensure you pass a copyable transport (eg: a reference)
-    fn client<C, F>(client: Client<C, F>) -> Self::Client<C, F>
-    where
-        C: Connection;
-
     /// Returns the name of this service
     fn service_name() -> &'static str;
 }
@@ -131,7 +107,7 @@ pub trait RpcWithServer<Server>: Rpc {
 /// Defines a RPC request
 pub trait Request {
     /// Returns the name of this method (for logging purposes)
-    fn name(&self) -> Cow<'static, str>;
+    fn name(&self) -> &'static str;
 }
 
 #[derive(Debug)]
@@ -179,7 +155,7 @@ pub trait ConnectionController<'a, F>: MaybeSend + MaybeSync {
     fn receiving_stream<I: MaybeSend>(
         &self,
         id: StreamID,
-    ) -> impl Future<Output = impl Stream<Item = I> + MaybeSend>
+    ) -> impl Future<Output = impl Stream<Item = I>  + MaybeSend> + MaybeSend
     where
         F: ReadFormat<I>;
 
@@ -188,7 +164,7 @@ pub trait ConnectionController<'a, F>: MaybeSend + MaybeSync {
     /// sent to the other end of the connection in a response
     fn sending_stream<I>(
         &self,
-        stream: impl Stream<Item = I> + MaybeSend + MaybeSync + 'a,
+        stream: impl Stream<Item = I> + MaybeSend + 'a,
     ) -> impl Future<Output = StreamID> + MaybeSend
     where
         F: WriteFormat<I>,

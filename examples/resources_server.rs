@@ -114,7 +114,7 @@ impl Resource for Author {
 }
 
 impl<T: Resource> ResourcesServer<T> for ResourceServer<T> {
-    async fn subscribe(&self) -> impl Stream<Item=T> + MaybeSend + MaybeSync {
+    async fn subscribe(&self) -> impl Stream<Item=T> + MaybeSend {
         tokio_stream::wrappers::BroadcastStream::new(self.new.subscribe()).filter_map(|result| {
             match result {
                 Ok(res) => Some(res),
