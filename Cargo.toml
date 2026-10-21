@@ -20,12 +20,17 @@ workspace = true
 [workspace.lints.clippy]
 pedantic = { level = "warn" }
 nursery = { level = "warn" }
+missing_errors_doc = { level = "allow", priority = 1 }
+missing_panics_doc = { level = "allow", priority = 1 }
+allow_attributes_without_reason = { level = "warn", priority = 1 }
+unused_async_trait_impl = { level = "allow", priority = 1 }
 
 [features]
 single-thread = []
-axum = ["dep:axum", "dep:tower"]
+axum-websocket = ["dep:axum", "dep:tower"]
 browser = ["dep:web-sys", "dep:wasm-bindgen-futures", "single-thread", "dep:gloo-net"]
-tokio_tungstenite = ["dep:tokio-tungstenite", "dep:tokio"]
+tokio_tungstenite = ["dep:tokio-tungstenite", "tokio"]
+tokio = ["dep:tokio"]
 
 # Formats
 json = ["dep:serde_json"]
@@ -33,8 +38,8 @@ browser-json = ["dep:serde-wasm-bindgen", "dep:web-sys", "dep:wasm-bindgen-futur
 cbor = ["dep:ciborium"]
 
 # Internal helper features for CI/CD, defined in a single place to avoid mistakes when adding/removeing features
-__test = ["axum", "json", "cbor", "tokio_tungstenite", "dep:tokio"]
-__wasm_test = ["json", "cbor", "browser", "browser-json", "tokio_tungstenite"]
+__test = ["axum-websocket", "json", "cbor", "tokio_tungstenite", "dep:tokio"]
+__wasm_test = ["json", "cbor", "browser", "browser-json"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
@@ -43,19 +48,20 @@ axum = { version = "0.8.7", optional = true, features = ["ws"]}
 tower = { version = "0.5.2", optional = true }
 macros = { package = "trait-rpc-macros", path = "macros" }
 futures = { version = "0.3.31", features = ["unstable", "bilock"] }
-bon = "3.8.1"
 tracing = "0.1.44"
 pin-project = "1.1.13"
 async-executor = { version = "1.13.3" }
-derive_more = { version = "2.1.1", features = ["from", "display"] }
-whirlwind = { version = "0.1.1" }
+derive_more = { version = "2.1.1", features = ["from", "display", "try_from", "into"] }
 async-channel = "2.5.0"
-async-lock = "3.4.2"
 pastey = "0.2.3"
+whirlwind = "0.1.1"
+futures-timer = "3.0.4"
+async-lock = "3.4.2"
 
 # Formats
 serde_json = { version = "1.0.145", optional = true }
 ciborium = { version = "0.2.2", optional = true }
+log = "0.4.29"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = { version = "0.4", optional = true }
@@ -78,6 +84,8 @@ async-executor = "1.13.3"
 tracing = { version = "0.1.44", features = ["log"] }
 simple_logger = "5.2.0"
 tokio-stream = { version = "0.1.19", features = ["sync"] }
+proptest = "1.12.0"
+proptest-derive = "0.9.0"
 
 [target.'cfg(not(target_arch="wasm32"))'.dev-dependencies]
 axum = { version = "0.8.7", features = ["ws", "macros"]}

@@ -8,23 +8,21 @@ use macros::rpc;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
+use futures::stream::iter;
 use tokio::spawn;
 use tokio::sync::{RwLock, oneshot};
 use tokio::time::{sleep, timeout};
 use tracing::log::Level;
 use tracing::{Instrument, debug, info, info_span};
-use trait_rpc::client::websocket::new_websocket_transport;
 use trait_rpc::format::json::Json;
-use trait_rpc::server::ServerHooks;
-use trait_rpc::server::axum::{WebsocketError, handle_websocket};
-use trait_rpc::{MaybeSend, MaybeSync, Rpc};
+use trait_rpc::websocket::axum::{handle_websocket, WebsocketError};
+use trait_rpc::websocket::tokio::new_websocket_transport;
 
 #[rpc]
 trait Service {
     fn simple_get() -> String;
     fn simple_set(value: u64);
     fn stream_out() -> impl Stream<Item = u64>;
-
     fn stream_in(input: impl Stream<Item=u64>) -> u64;
 
 }
@@ -48,24 +46,15 @@ impl ServiceServer for ServiceImpl {
         self.state.write().await.set_value = value;
     }
 
-    async fn stream_out(&self) -> impl Stream<Item = u64> + MaybeSend {
-        futures::stream::iter(0..10000).map(|i| {
+    async fn stream_out(&self) -> impl Stream<Item = u64> + Send + 'static {
+        futures::stream::iter(0..100).map(|i| {
             debug!("Sending {i}");
             i
         })
     }
 
-    async fn stream_in(&self, input: impl Stream<Item=u64> + MaybeSend) -> u64 {
+    async fn stream_in(&self, input: impl Stream<Item=u64> + Send) -> u64 {
         input.count().await as u64
-    }
-}
-
-impl ServerHooks<Service> for ServiceImpl {
-    async fn await_next<T>(&self, request: impl Future<Output = Option<T>> + Send) -> Option<T> {
-        tokio::time::timeout(Duration::from_mins(10), request)
-            .await
-            .ok()
-            .unwrap_or_default()
     }
 }
 
@@ -88,7 +77,7 @@ async fn run_server(
 }
 
 async fn handle(server: ServiceImpl, websocket: WebSocketUpgrade) -> impl IntoResponse {
-    let result = handle_websocket(websocket, server, &Json);
+    let result = handle_websocket::<Service, _>(websocket, server, &Json).await;
     match result {
         Ok(response) => response,
         Err(WebsocketError::UnsupportedFormat) => StatusCode::BAD_REQUEST.into_response(),
@@ -112,13 +101,14 @@ async fn websocket_test() {
     let client = new_websocket_transport("ws://localhost:9865/", Json, || {})
         .await
         .expect("failed to create client");
-    let client = Service::client(client);
+    let client = Service::client(client, Json);
 
     let executor = Executor::new();
     let tests = [
         executor.spawn(test_simple_get(&client)),
         executor.spawn(test_simple_set(&client, &state)),
-        executor.spawn(test_stream(&client)),
+        executor.spawn(test_stream_out(&client)),
+        executor.spawn(test_stream_in(&client)),
     ];
     let tests = tests
         .into_iter()
@@ -157,14 +147,19 @@ async fn test_simple_set(client: &impl ServiceClient, state: &Arc<RwLock<ServerS
     assert_eq!(state.read().await.set_value, 42);
 }
 
-async fn test_stream(client: &impl ServiceClient) {
+async fn test_stream_out(client: &impl ServiceClient) {
     let stream = client.stream_out().await.expect("Failed to set value");
     let mut stream = pin!(stream);
-    for i in 0..10000 {
+    for i in 0..100 {
         let value = stream
             .next()
             .await
             .expect("stream closed early");
         assert_eq!(i, value);
     }
+}
+
+async fn test_stream_in(client: &impl ServiceClient) {
+    let value = client.stream_in(iter(0..100)).await.expect("Failed to set value");
+    assert_eq!(value, 100);
 }

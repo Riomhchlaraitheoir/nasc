@@ -2,21 +2,44 @@
 #[doc(hidden)]
 pub mod imports {
     pub use crate::{
-        ConnectionController, Handler, MaybeSend, MaybeSync, Rpc, RpcWithServer, StreamError,
-        client::{Client, ClientError, Connection, WrongResponseType},
+        Handler, Rpc, RpcWithServer, StreamError,
+        connection::{
+            ConnectionManager, TeardownGuard,
+            client::{Client, ClientError},
+            message::{StreamID, RequestID, ServiceID, HandleError},
+            MethodID
+        },
         format::{Format, ReadFormat, WriteFormat},
-        message::StreamID,
         Request as RpcRequest,
-        __streams, __add_stream_bounds
+        __add_stream_bounds, method_id, __transport_type, __for_special_values,
     };
     pub use ::{
-        futures::sink::{Sink, SinkExt},
-        futures::stream::{Stream, StreamExt},
+        futures::{
+            sink::{Sink, SinkExt},
+            stream::{Stream, StreamExt},
+            future::BoxFuture
+        },
         serde::{Deserialize, Serialize},
-        std::borrow::Cow,
-        std::convert::Infallible,
-        std::marker::PhantomData,
+        std::{
+            borrow::Cow,
+            convert::Infallible,
+            marker::PhantomData,
+            sync::Arc,
+        },
+        pastey::paste,
+        tracing,
     };
+}
+
+#[macro_export]
+macro_rules! method_id {
+    ($service:ty => $method_name:ident) => {const {
+        const fn _assert_is_rpc_service<T: Rpc>() {}
+        _assert_is_rpc_service::<$service>();
+        $crate::__macros::imports::paste! {
+            <$service>::[<METHOD_ID_ $method_name>]
+        }
+    }};
 }
 
 #[doc(hidden)]
@@ -32,17 +55,14 @@ macro_rules! __generate_rpc {
         where_bounds = [$($where_bounds:tt)*],
         name = $name:ident,
         methods = [$({
+            id = $method_id:expr,
             docs = { $($method_docs:expr),* },
             name = $method_name:ident,
             args = [$({
                 name = $arg_name:ident,
-                user = ($($arg_user_type:tt)*),
-                transport = $arg_transport_type:ty,
+                user = ($($arg_type:tt)*),
             })*],
-            return_type = {
-                user = ($($user_return_type:tt)*),
-                transport = $transport_return_type:ty,
-            },
+            return_type = ($($return_type:tt)*),
             streamed_in = [$($streamed_in:ty),*],
             streamed_out = [$($streamed_out:ty),*],
         })*],
@@ -70,121 +90,101 @@ $(#[doc = $docs])*
 pub struct $name<$($generics),*>(PhantomData<fn() -> ($($generics,)*)>) where ():Sized, $($where_bounds)*;
 
 
+impl<$($generics),*> $name<$($generics),*> where (): Sized, $($generics: 'static,)* $($where_bounds)* {
+    $(const [<METHOD_ID_ $method_name>]: MethodID = MethodID::_new($method_id);)*
+}
+
 impl<$($generics),*> Rpc for $name<$($generics),*> where (): Sized, $($generics: 'static,)* $($where_bounds)* {
-    type Request = Request<$($generics),*>;
-    type Response = Response<$($generics),*>;
     fn service_name() -> &'static str {
         stringify!($name)
     }
 }
 
 impl<$($generics),*> $name<$($generics),*> where ():Sized, $($generics: 'static,)* $($where_bounds)* {
-    pub fn client<_Conn: Connection, _Format>(client: Client<_Conn, _Format>) -> impl [<$name Client>]<$($generics)*>
+    pub fn client<_Format>(client: Client, format: _Format) -> impl [<$name Client>]<$($generics)*>
     where
-        _Conn: Connection + MaybeSend + 'static,
-        _Format: Format<Response<$($generics),*>, Request<$($generics),*>>,
+        $(_Format: WriteFormat<($(__transport_type!($($arg_type)*),)*)>,)*
+        $(_Format: ReadFormat<__transport_type!($($return_type)*)>,)*
         $($(_Format: ReadFormat<$streamed_out>,)*)*
         $($(_Format: WriteFormat<$streamed_in>,)*)*
-        $($($streamed_in: MaybeSync,)*)*
-        $($($streamed_out: MaybeSync,)*)*
+        $($($streamed_in: Sync,)*)*
+        $($($streamed_out: Sync,)*)*
         $($generics: Send + 'static,)*
         $($where_bounds)*
     {
-        [<$name Client Impl>](client, PhantomData::<fn() -> ($($generics,)*)>)
+        [<$name Client Impl>] {
+            client,
+            format,
+            _phantom: PhantomData::<fn() -> ($($generics,)*)>
+        }
     }
 }
 
 
 impl<_Server: [<$name Server>]<$($generics),*>, $($generics),*> RpcWithServer<_Server> for $name<$($generics),*> where ():Sized,  $($generics: Send + 'static,)* $($where_bounds)* {
-    type Handler<_Format> = [<$name Handler>]<_Server, $($generics),*>;
+    type Handler<_Format> = [<$name Handler>]<_Server, _Format, $($generics),*>;
 
-    fn handler<_Format>(server: _Server) ->  Self::Handler<_Format> {
-        [<$name Handler>](server, PhantomData::<fn() -> ($($generics,)*)>)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(crate = $serde)]
-#[serde(tag = "method", content = "args")]
-pub enum Request<$($generics),*> {
-    $(
-    $(#[doc = $method_docs])*
-    $method_name { $($arg_name: $arg_transport_type),* },
-    )*
-}
-
-impl<$($generics),*> RpcRequest for Request<$($generics),*> {
-    fn name(&self) -> &'static str {
-        match self {
-            $(Request::$method_name{..} => stringify!($method_name), )*
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(crate = $serde)]
-#[serde(tag = "method", content = "result")]
-pub enum Response<$($generics),*> {
-    $(
-    $(#[doc = $method_docs])*
-    $method_name($transport_return_type),
-    )*
-}
-
-impl<$($generics),*>  Response<$($generics),*> {
-    fn fn_name(&self) -> &'static str {
-        match self {
-            $(Response::$method_name(..) => stringify!($method_name), )*
-        }
+    fn handler<_Format>(server: _Server, format: _Format) ->  Self::Handler<_Format> {
+        [<$name Handler>]{server, format, _phantom: PhantomData::<fn() -> ($($generics,)*)>}
     }
 }
 
 $(#[doc = $docs])*
 ///
 /// This is the trait which is used by the server side in order to serve the client
-pub trait [<$name Server>]<$($generics),*>: MaybeSend + MaybeSync {
+pub trait [<$name Server>]<$($generics),*>: Send + Sync {
     $(
     $(#[doc = $method_docs])*
-    fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + MaybeSend), $($arg_user_type)*)),*) -> impl Future<Output=__add_stream_bounds!(( + MaybeSend), $($user_return_type)*)> + MaybeSend;
+    fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send), $($arg_type)*)),*) -> impl Future<Output=__add_stream_bounds!(( + Send + 'static), $($return_type)*)> + Send;
     )*
 }
 
 /// A [Handler](Handler) which handles requests/responses for a given service
 #[derive(Debug, Clone)]
-pub struct [<$name Handler>]<_Server $(,$generics)*>(_Server, PhantomData<fn() -> ($($generics,)*)>);
+pub struct [<$name Handler>]<_Server, _Format $(,$generics)*>{
+    server: _Server,
+    format: _Format,
+    _phantom: PhantomData<fn() -> ($($generics,)*)>
+}
 
-impl<_Server: [<$name Server>]<$($generics,)*>, _Format, $($generics,)*> Handler<_Format> for [<$name Handler>]<_Server, $($generics),*>
+impl<_Server: [<$name Server>]<$($generics,)*>, _Format, $($generics,)*> Handler for [<$name Handler>]<_Server, _Format, $($generics),*>
 where
     ():Sized,
+    $(_Format: ReadFormat<($(__transport_type!($($arg_type)*),)*)>,)*
+    $(_Format: WriteFormat<__transport_type!($($return_type)*)>,)*
     $($(_Format: ReadFormat<$streamed_in>,)*)*
     $($(_Format: WriteFormat<$streamed_out>,)*)*
-    $($($streamed_in: MaybeSync,)*)*
-    $($($streamed_out: MaybeSync,)*)*
-    $($generics: MaybeSend + 'static,)*
+    $($($streamed_in: Sync,)*)*
+    $($($streamed_out: Sync,)*)*
+    $($generics: Send + 'static,)*
     $($where_bounds)*
 {
-    type Rpc = $name<$($generics),*>;
-    type Server = _Server;
-
-    fn server(&self) -> &Self::Server {
-        &self.0
-    }
-
-    async fn handle<'a>(
-        &'a self,
-        request: Request<$($generics),*>,
-        controller: &impl ConnectionController<'a, _Format>
-    ) -> Response<$($generics),*> {
-        match request {
+    fn handle(
+        &self,
+        request_id: RequestID,
+        method_id: MethodID,
+        request: Vec<u8>,
+        manager: Arc<ConnectionManager>,
+        guard: TeardownGuard
+    ) -> BoxFuture<Result<Vec<u8>, HandleError>> {
+        Box::pin(async move {
+        match method_id.value() {
             $(
-            Request::$method_name { $($arg_name),* } => {
-                $(let $arg_name = __streams!(receiving_stream, $arg_name, controller, $($arg_user_type)*);)*
-                let value = self.0.$method_name($($arg_name),*).await;
-                let value = __streams!(sending_stream, value, controller, $($user_return_type)*);
-                Response::$method_name(value)
+            $method_id => {
+                let ($($arg_name,)*): ($(__transport_type!($($arg_type)*),)*) = self.format.read(&request).map_err(|error| {
+                    HandleError::BadPayloadFormat(error.to_string())
+                })?;
+                $(let $arg_name = __for_special_values!($arg_name, __incoming_values((manager: manager, format: self.format, guard: guard)), $($arg_type)*);)*
+                let value = self.server.$method_name($($arg_name),*).await;
+                let value = __for_special_values!(value, __outgoing_values((manager: manager, format: self.format, guard: guard)), $($return_type)*);
+                self.format.write(value).map_err(|error| {
+                    HandleError::InternalError(format!("Error writing response: {}", error))
+                })
             }
             )*
+            _ => return Err(HandleError::MethodNotFound),
         }
+        })
     }
 }
 
@@ -192,11 +192,15 @@ pub trait [<$name Client>]<$($generics),*>: Send + Sync where ():Sized, $($where
     type Error: std::fmt::Debug;
     $(
     $(#[doc = $method_docs])*
-    fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + MaybeSend + 'static), $($arg_user_type)*)),*) -> impl Future<Output=Result<__add_stream_bounds!(( + MaybeSend), $($user_return_type)*), Self::Error>> + MaybeSend;
+    fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send + 'static), $($arg_type)*)),*) -> impl Future<Output=Result<__add_stream_bounds!(( + Send), $($return_type)*), Self::Error>> + Send;
     )*
 }
 
-pub struct [<$name Client Impl>]<_Conn, _Format, $($generics),*>(Client<_Conn, _Format>, PhantomData<fn() -> ($($generics,)*)>) where ():Sized, $($where_bounds)*;
+pub struct [<$name Client Impl>]<_Format, $($generics),*> where ():Sized, $($where_bounds)* {
+    client: Client,
+    format: _Format,
+    _phantom: PhantomData<fn() -> ($($generics,)*)>
+}
 
 $(#[doc = $docs])*
 ///
@@ -204,29 +208,27 @@ $(#[doc = $docs])*
 /// and sends the requests with the given [client](Client) before returning the response
 ///
 ///  The return value is always wrapped in a result: `Result<T, ClientError<_Conn::SendError>>` where `T` is the service return value
-impl<_Conn, _Format, $($generics),*> [<$name Client>]<$($generics)*> for [<$name Client Impl>]<_Conn, _Format, $($generics),*>
+impl<_Format, $($generics),*> [<$name Client>]<$($generics)*> for [<$name Client Impl>]<_Format, $($generics),*>
 where
-    _Conn: Connection + MaybeSend + 'static,
-    _Format: Format<Response<$($generics),*>, Request<$($generics),*>>,
+    $(_Format: WriteFormat<($(__transport_type!($($arg_type)*),)*)>,)*
+    $(_Format: ReadFormat<__transport_type!($($return_type)*)>,)*
     $($(_Format: ReadFormat<$streamed_out>,)*)*
     $($(_Format: WriteFormat<$streamed_in>,)*)*
-    $($($streamed_in: MaybeSync,)*)*
-    $($($streamed_out: MaybeSync,)*)*
+    $($($streamed_in: Sync,)*)*
+    $($($streamed_out: Sync,)*)*
     $($generics: Send + 'static,)*
     $($where_bounds)* {
-    type Error = ClientError<_Conn::SendError>;
+    type Error = ClientError;
 
     $(
     $(#[doc = $method_docs])*
-    async fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + MaybeSend + 'static), $($arg_user_type)*)),*) -> Result<$($user_return_type)*, Self::Error> {
-        $(let $arg_name = __streams!(sending_stream, $arg_name, self.0, $($arg_user_type)*);)*
-        match self.0.send(Request::$method_name { $($arg_name),* }).await? {
-            Response::$method_name(value) => {
-                let value = __streams!(receiving_stream, value, self.0, $($user_return_type)*);
-                Ok(value)
-            }
-            other => Err(WrongResponseType::new(stringify!($method_name), other.fn_name()).into())
-        }
+    async fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send + 'static), $($arg_type)*)),*) -> Result<$($return_type)*, Self::Error> {
+        $(let $arg_name = __for_special_values!($arg_name, __outgoing_values((manager: self.client.service_manager(), format: self.format, guard: self.client.guard)), $($arg_type)*);)*
+        let request: Vec<u8> = self.format.write(($($arg_name,)*)).map_err(ClientError::Serialise)?;
+        let response = self.client.send(MethodID::_new($method_id), request).await?;
+        let value: __transport_type!($($return_type)*) = self.format.read(&response).map_err(ClientError::Deserialise)?;
+        let value = __for_special_values!(value, __incoming_values((manager: self.client.service_manager(), format: self.format, guard: self.client.guard)), $($return_type)*);
+        Ok(value)
     }
     )*
 }
@@ -236,58 +238,132 @@ where
     }
 }
 
+#[macro_export]
+macro_rules! __outgoing_values {
+    (stream<$item:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{
+        let format = $format.clone();
+        use $crate::__macros::imports::StreamExt;
+        let $value = StreamExt::filter_map($value, move |item|{
+            let format = format.clone();
+            async move {
+                match format.write(item) {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        $crate::__macros::imports::tracing::error!("Failed to serialise item for stream: {error}");
+                        None
+                    }
+                }
+            }
+        });
+        let id: u32 = $manager.outgoing_stream($value, $guard.clone()).await.into();
+        id
+    }};
+}
+
+#[macro_export]
+macro_rules! __incoming_values {
+    (stream<$item:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{
+        let format = $format.clone();
+        use $crate::__macros::imports::StreamExt;
+        StreamExt::filter_map($manager.incoming_stream(StreamID::from($value), $guard.clone()).await, move |bytes| {
+            let format = format.clone();
+            async move {
+                match ReadFormat::<$item>::read(&format, &bytes) {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        $crate::__macros::imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
+                        None
+                    }
+                }
+            }
+        })
+    }};
+}
+
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __streams {
+macro_rules! __for_special_values {
     // tuple
-    ($method:ident, $value:ident, $controller:expr, ($($t:ty),*$(,)?)) => {
-        $crate::__streams!(tuple: $method, $value, $controller, ($($t,)*))
+    ($value:ident, $macro_name:ident($args:tt), ($($t:ty),*$(,)?)) => {
+        $crate::__for_special_values!(tuple: $value, $macro_name($args), ($($t,)*))
     };
-    (tuple: $method:ident, $value:ident, $controller:expr, ($($t:ty,)*)) => {
-        $crate::__streams!(named_tuple: $method, $value, $controller, a, ($($t,)*))
+    (tuple: $value:ident, $macro_name:ident($args:tt), ($($t:ty,)*)) => {
+        $crate::__for_special_values!(named_tuple: $value, $macro_name($args), a, ($($t,)*))
     };
-    (named_tuple: $method:ident, $value:ident, $controller:expr, $i:tt, ($(#$name:tt: $named:ty,)*$t:ty,$($unnamed:ty,)*)) => {
-        $crate::__streams!(named_tuple: $method, $value, $controller, [<$i a>], ($(#$name: $named,)* #$i: $t, $($unnamed,)*))
+    (named_tuple: $value:ident, $macro_name:ident($args:tt), $i:tt, ($(#$name:tt: $named:ty,)*$t:ty,$($unnamed:ty,)*)) => {
+        $crate::__for_special_values!(named_tuple: $value, $macro_name($args), [<$i a>], ($(#$name: $named,)* #$i: $t, $($unnamed,)*))
     };
-    (named_tuple: $method:ident, $value:ident, $controller:expr, $_:tt, ($(#$name:tt: $t:ty,)*)) => {{
+    (named_tuple: $value:ident, $macro_name:ident($args:tt), $_:tt, ($(#$name:tt: $t:ty,)*)) => {{
         let ($($name,)*) = $value;
         $(
-        let $name = $crate::__streams!($method, $name, $controller, $t);
+        let $name = $crate::__for_special_values!($name, $macro_name($args), $t);
         )*
         ($($name,)*)
     }};
-    ($method:ident, $value:ident, $controller:expr, Result<$ok:ty, $err:ty>) => {
+    ($value:ident, $macro_name:ident($args:tt), Result<$ok:ty, $err:ty>) => {
         match $value {
             Ok($value) => {
-                Ok($crate::__streams!($method, $value, $controller, $ok))
+                Ok($crate::__for_special_values!($value, $macro_name($args), $ok))
             },
             Err($value) => {
-                Err($crate::__streams!($method, $value, $controller, $err))
+                Err($crate::__for_special_values!($value, $macro_name($args), $err))
             },
         }
     };
-    ($method:ident, $value:ident, $controller:expr, Option<$ty:ty>) => {
+    ($value:ident, $macro_name:ident($args:tt), Option<$ty:ty>) => {
         match $value {
             Some($value) => {
-                Some($crate::__streams!($method, $value, $controller, $ty))
+                Some($crate::__for_special_values!($value, $macro_name($args), $ty))
             },
             None => None
         }
     };
-    ($method:ident, $value:ident, $controller:expr, impl Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
-        $controller.$method::<$item>($value).await
+    ($value:ident, $macro_name:ident($args:tt), impl $($(::)?futures::stream::)?Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
+        $crate::$macro_name!(stream<$item>: $value, $args);
     };
-    ($method:ident, $value:ident, $controller:expr, impl futures::stream::Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
-        $controller.$method::<$item>($value).await
+    ($value:ident, $macro_name:ident($args:tt), impl Rpc<$rpc:ty>) => {
+        $crate::$macro_name!(rpc<$rpc>: $value, $args);
     };
-    ($method:ident, $value:ident, $controller:expr, impl $($unexpected:tt)*) => {
+    ($value:ident, $macro_name:ident($args:tt), impl $($unexpected:tt)*) => {
         compile_error!(concat!("unexpected impl argument: impl ", stringify!($($unexpected)*)));
     };
-    ($method:ident, $value:ident, $controller:expr, $other:ty) => {
+    ($value:ident, $macro_name:ident($args:tt), $other:ty) => {
         $value
     };
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __transport_type {
+    // tuple
+    (()) => {
+        ()
+    };
+    (($t:ty)) => {
+        $crate::__transport_type!($t)
+    };
+    (($($t:ty),*$(,)?)) => {
+        $($crate::__transport_type!($t),)*
+    };
+    (Result<$ok:ty, $err:ty>) => {
+        Result<$crate::__transport_type!($ok), $crate::__transport_type!($err)>
+    };
+    (Option<$ty:ty>) => {
+        Option<$crate::__transport_type!($ty)>
+    };
+    (impl Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
+        u32
+    };
+    (impl futures::stream::Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
+        u32
+    };
+    (impl $($unexpected:tt)*) => {
+        compile_error!(concat!("unexpected impl argument: impl ", stringify!($($unexpected)*)))
+    };
+    ($other:ty) => {
+        $other
+    };
+}
 
 #[doc(hidden)]
 #[macro_export]

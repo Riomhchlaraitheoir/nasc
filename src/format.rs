@@ -1,5 +1,4 @@
 //! Defines format behaviour
-#![allow(clippy::missing_errors_doc, reason = "Errors are obvious")]
 
 use std::error::Error;
 
@@ -38,7 +37,7 @@ pub trait WriteFormat<Write>: Send + Sync + IsFormat {
 }
 
 /// A format which is either A or B
-#[allow(missing_docs)]
+#[allow(missing_docs, reason = "Variants are self documenting")]
 #[derive(Debug, Clone, Copy)]
 pub enum EitherFormat<A, B> {
     Left(A),

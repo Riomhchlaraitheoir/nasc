@@ -1,9 +1,7 @@
 use crate::parse::parse_rpc;
 use proc_macro2::Ident;
 use quote::ToTokens;
-use syn::parse::{Parse, ParseStream};
-use syn::spanned::Spanned;
-use syn::{Expr, ItemTrait, LitStr, Path, Token, Type, Visibility, WherePredicate, parse_quote};
+use syn::{Expr, ItemTrait, LitStr, Path, Type, Visibility, WherePredicate};
 
 mod parse;
 
@@ -28,6 +26,7 @@ struct Rpc {
 }
 
 struct Method {
+    id: Option<Expr>,
     docs: Vec<Expr>,
     name: Ident,
     args: Vec<(Ident, Param)>,
@@ -48,43 +47,4 @@ enum Param {
 pub struct Args {
     trait_rpc: Path,
     serde: LitStr,
-}
-
-impl Parse for Args {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut trait_rpc = None;
-        let mut serde = None;
-        while !input.is_empty() {
-            let key: Ident = input.parse()?;
-            let _eq_token: Token![=] = input.parse()?;
-            match key.to_string().as_str() {
-                "trait_rpc" => {
-                    trait_rpc = Some(input.parse()?);
-                }
-                "serde" => {
-                    serde = Some(input.parse()?);
-                }
-                other => {
-                    return Err(syn::Error::new_spanned(
-                        key,
-                        format!("unknown arg: {other}"),
-                    ));
-                }
-            }
-            if input.is_empty() {
-                break;
-            }
-            input.parse::<Token![,]>()?;
-        }
-        let trait_rpc: Path = trait_rpc.unwrap_or_else(|| parse_quote!(::trait_rpc));
-        let serde = serde.unwrap_or_else(|| {
-            let span = trait_rpc.span();
-            let trait_rpc = trait_rpc.clone().to_token_stream().to_string().replace(' ', "");
-            LitStr::new(&format!("{trait_rpc}::serde"), span)
-        });
-        Ok(Self {
-            trait_rpc,
-            serde,
-        })
-    }
 }

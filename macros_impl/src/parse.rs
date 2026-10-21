@@ -1,12 +1,49 @@
 use crate::{Args, Method, Param, Rpc};
+use proc_macro2::Ident;
 use quote::ToTokens;
+use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::token::Colon;
-use syn::{
-    Attribute, Expr, FnArg, GenericArgument, GenericParam, ItemTrait, Meta, MetaNameValue, Pat,
-    PatIdent, PathArguments, PathSegment, PredicateType, ReturnType, TraitItem, TraitItemFn, Type,
-    TypeParamBound, WherePredicate, parse_quote,
-};
+use syn::{Attribute, Expr, FnArg, GenericArgument, GenericParam, ItemTrait, LitStr, Meta, MetaNameValue, Pat, PatIdent, Path, PathArguments, PathSegment, PredicateType, ReturnType, Token, TraitItem, TraitItemFn, Type, TypeParamBound, WherePredicate, parse_quote};
+
+impl Parse for Args {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut trait_rpc = None;
+        let mut serde = None;
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            let _eq_token: Token![=] = input.parse()?;
+            match key.to_string().as_str() {
+                "trait_rpc" => {
+                    trait_rpc = Some(input.parse()?);
+                }
+                "serde" => {
+                    serde = Some(input.parse()?);
+                }
+                other => {
+                    return Err(syn::Error::new_spanned(
+                        key,
+                        format!("unknown arg: {other}"),
+                    ));
+                }
+            }
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<Token![,]>()?;
+        }
+        let trait_rpc: Path = trait_rpc.unwrap_or_else(|| parse_quote!(::trait_rpc));
+        let serde = serde.unwrap_or_else(|| {
+            let span = trait_rpc.span();
+            let trait_rpc = trait_rpc.clone().to_token_stream().to_string().replace(' ', "");
+            LitStr::new(&format!("{trait_rpc}::serde"), span)
+        });
+        Ok(Self {
+            trait_rpc,
+            serde,
+        })
+    }
+}
 
 pub fn parse_rpc(input: ItemTrait, args: Args) -> syn::Result<Rpc> {
     let mut methods = vec![];
@@ -99,7 +136,9 @@ fn method(item: TraitItemFn) -> syn::Result<Method> {
     }
     let ret = return_type(item.sig.output)?;
     let docs = item.attrs.iter().filter_map(docs).collect();
+    let id = item.attrs.iter().find_map(id);
     Ok(Method {
+        id,
         docs,
         name,
         args,
@@ -117,6 +156,18 @@ fn return_type(output: ReturnType) -> syn::Result<Param> {
 fn docs(attr: &Attribute) -> Option<Expr> {
     if let Meta::NameValue(MetaNameValue { path, value, .. }) = &attr.meta {
         if path.is_ident("doc") {
+            Some(value.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn id(attr: &Attribute) -> Option<Expr> {
+    if let Meta::NameValue(MetaNameValue { path, value, .. }) = &attr.meta {
+        if path.is_ident("id") {
             Some(value.clone())
         } else {
             None

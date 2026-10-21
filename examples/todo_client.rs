@@ -2,7 +2,7 @@
 
 use trait_rpc::format::json::Json;
 use trait_rpc::{Rpc};
-use trait_rpc::client::websocket::new_websocket_transport;
+use trait_rpc::websocket::tokio::new_websocket_transport;
 
 include!("traits/todo.rs");
 
@@ -11,7 +11,7 @@ async fn main() {
     let websocket = new_websocket_transport("ws://localhost:8080/api/todo", Json, ||{
         println!("Client closed");
     }).await.unwrap();
-    let client = TodoService::client(websocket);
+    let client = TodoService::client(websocket, Json);
     for todo in client.get_todos().await.expect("get_todos failed") {
         println!("{todo:?}");
     }

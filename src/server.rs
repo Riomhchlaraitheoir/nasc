@@ -3,7 +3,7 @@
 use futures::FutureExt;
 use crate::format::{Format, ReadFormat, WriteFormat};
 use crate::message::{ConnectionError, ConnectionMessage, RequestID, StreamID};
-use crate::{BoxStream, ConnectionController, Executor, Handler, MaybeSend, MaybeSync, Rc, Rpc, Series};
+use crate::{BoxStream, ConnectionController, Executor, Handler, Send, Sync, Rc, Rpc, Series};
 use async_channel::{Receiver, Sender};
 use futures::channel::oneshot;
 use futures::stream::unfold;
@@ -32,8 +32,8 @@ pub trait ServerHooks<R: Rpc> {
     /// By default, it will simply pass the given future through, meaning no timeouts, rate limiting, etc.
     fn await_next<T>(
         &self,
-        request: impl Future<Output = Option<T>> + MaybeSend,
-    ) -> impl Future<Output = Option<T>> + MaybeSend {
+        request: impl Future<Output = Option<T>> + Send,
+    ) -> impl Future<Output = Option<T>> + Send {
         request
     }
 
@@ -71,7 +71,7 @@ struct Server<'a, H: Handler<F>, F> {
 
 impl<'a, H, F> Server<'a, H, F>
 where
-    H: Handler<F> + MaybeSync + 'a,
+    H: Handler<F> + Sync + 'a,
     H::Server: ServerHooks<H::Rpc>,
     F: Format<<H::Rpc as Rpc>::Request, <H::Rpc as Rpc>::Response>,
 {
@@ -182,7 +182,7 @@ where
         }
     }
 
-    fn raw_receiving_stream(&self, id: StreamID) -> impl Stream<Item = Vec<u8>> + MaybeSend {
+    fn raw_receiving_stream(&self, id: StreamID) -> impl Stream<Item = Vec<u8>> + Send {
         unfold(id, async |id| {
             let (sender, receiver) = oneshot::channel();
             self.polled_incoming_streams.insert(id, sender).await;
@@ -209,7 +209,7 @@ where
 
     async fn raw_sending_stream(
         &self,
-        stream: impl Stream<Item = Vec<u8>> + MaybeSend + 'a,
+        stream: impl Stream<Item = Vec<u8>> + Send + 'a,
     ) -> StreamID {
         let id: StreamID = self.stream_ids.next();
         self.outgoing_streams.insert(id, Box::pin(stream)).await;
@@ -219,14 +219,14 @@ where
 
 impl<'a, H, F> ConnectionController<'a, F> for Server<'a, H, F>
 where
-    H: Handler<F> + MaybeSync + 'a,
+    H: Handler<F> + Sync + 'a,
     H::Server: ServerHooks<H::Rpc>,
     F: Format<<H::Rpc as Rpc>::Request, <H::Rpc as Rpc>::Response>,
 {
-    async fn receiving_stream<I: MaybeSend>(
+    async fn receiving_stream<I: Send>(
         &self,
         id: StreamID,
-    ) -> impl Stream<Item = I> + MaybeSend
+    ) -> impl Stream<Item = I> + Send
     where
         F: ReadFormat<I>,
     {
@@ -242,11 +242,11 @@ where
 
     async fn sending_stream<I>(
         &self,
-        stream: impl Stream<Item = I> + MaybeSend + 'a,
+        stream: impl Stream<Item = I> + Send + 'a,
     ) -> StreamID
     where
         F: WriteFormat<I>,
-        I: MaybeSend + MaybeSync + 'static,
+        I: Send + Sync + 'static,
     {
         let format = self.format.clone();
         self.raw_sending_stream(

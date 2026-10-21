@@ -1,7 +1,7 @@
 #![allow(dead_code, reason = "The types here are not used for all features, but they could be")]
 
-use futures::stream::FusedStream;
 use futures::Stream;
+use futures::stream::FusedStream;
 use pin_project::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};

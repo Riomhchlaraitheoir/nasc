@@ -7,5 +7,6 @@ fn main() {
         browser: { all(feature = "browser", target_arch = "wasm32") },
         tokio_websocket: { all(feature = "tokio_tungstenite", not(target_arch = "wasm32")) },
         wasm_websocket: { all(feature = "browser", target_arch = "wasm32") },
+        websocket: { any(tokio_websocket, wasm_websocket) },
     }
 }

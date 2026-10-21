@@ -30,7 +30,7 @@ pub mod wasm_websocket;
 pub use wasm_websocket as websocket;
 
 use crate::message::{ConnectionError, ConnectionMessage, RequestID, StreamID};
-use crate::{BoxStream, Executor, MaybeSend, MaybeSync, Rc, Series};
+use crate::{BoxStream, Executor, Send, Sync, Rc, Series};
 use crate::shard_map::ShardMap;
 
 /// This is a error that the client may return after a request
@@ -131,19 +131,19 @@ impl MaybeWrongResponse for WrongResponseType {
 }
 
 /// Represents the underlying connection
-pub trait Connection: MaybeSync {
+pub trait Connection: Sync {
     /// An error that can occur when sending on this connection
-    type SendError: Debug + Display + MaybeSend + MaybeSync + 'static;
+    type SendError: Debug + Display + Send + Sync + 'static;
     /// An error that can occur when reading from this connections
-    type RecvError: Debug + Display + MaybeSend + MaybeSync + 'static;
+    type RecvError: Debug + Display + Send + Sync + 'static;
 
     /// Send the given raw bytes to the connection
     fn send(
         &self,
         value: Vec<u8>,
-    ) -> impl Future<Output = Result<(), Self::SendError>> + MaybeSend + MaybeSync;
+    ) -> impl Future<Output = Result<(), Self::SendError>> + Send + Sync;
     /// Read raw bytes from the connection
-    fn recv(&self) -> impl Future<Output = Result<Vec<u8>, Self::RecvError>> + MaybeSend;
+    fn recv(&self) -> impl Future<Output = Result<Vec<u8>, Self::RecvError>> + Send;
 }
 
 /// This type manages a connection (either client-side or server-side), manages all incoming and
@@ -177,7 +177,7 @@ impl<Conn> Clone for ConnectionManager<Conn> {
 
 impl<Conn> ConnectionManager<Conn>
 where
-    Conn: Connection + MaybeSync + MaybeSend + 'static,
+    Conn: Connection + Sync + Send + 'static,
 {
     pub fn new(conn: Conn) -> Self {
         Self {
@@ -274,7 +274,7 @@ where
     fn receiving_stream(
         &self,
         id: StreamID,
-    ) -> impl Stream<Item = Vec<u8>> + MaybeSend + MaybeSync {
+    ) -> impl Stream<Item = Vec<u8>> + Send + Sync {
         unfold(id, async |id| {
             let (sender, receiver) = oneshot::channel();
             self.polled_incoming_streams.insert(id, sender).await;
@@ -301,7 +301,7 @@ where
 
     async fn sending_stream(
         &self,
-        stream: impl Stream<Item = Vec<u8>> + MaybeSend + 'static,
+        stream: impl Stream<Item = Vec<u8>> + Send + 'static,
     ) -> StreamID {
         let id: StreamID = self.stream_ids.next();
         self.outgoing_streams.insert(id, Box::pin(stream)).await;
@@ -323,7 +323,7 @@ pub struct Client<Conn, F> {
     format: F,
 }
 
-impl<Conn: Connection + MaybeSend + 'static, F> Client<Conn, F> {
+impl<Conn: Connection + Send + 'static, F> Client<Conn, F> {
     pub(crate) fn new(
         conn: Conn,
         format: F,
@@ -394,7 +394,7 @@ where
     /// Stream this stream's values to the underlying connection with the returned id
     pub async fn sending_stream<I: Send + Sync>(
         &self,
-        stream: impl Stream<Item = I> + MaybeSend + 'static,
+        stream: impl Stream<Item = I> + Send + 'static,
     ) -> StreamID
     where
         F: WriteFormat<I>,

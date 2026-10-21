@@ -9,12 +9,10 @@ use axum_extra::{TypedHeader, headers};
 use derive_more::Deref;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 use trait_rpc::format::cbor::Cbor;
 use trait_rpc::format::json::Json;
-use trait_rpc::server::ServerHooks;
-use trait_rpc::server::axum::{WebsocketError, handle_websocket};
+use trait_rpc::websocket::axum::{handle_websocket, WebsocketError};
 
 include!("traits/todo.rs");
 
@@ -52,13 +50,6 @@ impl TodoServiceServer for Todos {
     }
 }
 
-impl ServerHooks<TodoService> for Todos {
-    async fn await_next<T>(&self, request: impl Future<Output = Option<T>> + Send) -> Option<T> {
-        // 10 minutes idle timeout
-        tokio::time::timeout(Duration::from_mins(10), request).await.ok().unwrap_or_default()
-    }
-}
-
 #[tokio::main]
 async fn main() {
     let app = axum::Router::new()
@@ -72,7 +63,7 @@ async fn main() {
 
 async fn service_websocket(conn: WebSocketUpgrade, server: Todos) -> impl IntoResponse {
     let result =
-        handle_websocket::<TodoService, _, _>(conn, server, &(Json, Cbor));
+        handle_websocket::<TodoService, _>(conn, server, &(Json, Cbor)).await;
     match result {
         Ok(response) => response,
         Err(WebsocketError::UnsupportedFormat) => StatusCode::BAD_REQUEST.into_response(),

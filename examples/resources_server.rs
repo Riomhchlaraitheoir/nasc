@@ -16,11 +16,9 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
 use tracing::warn;
-use trait_rpc::{MaybeSend, MaybeSync};
 use trait_rpc::format::cbor::Cbor;
 use trait_rpc::format::json::Json;
-use trait_rpc::server::ServerHooks;
-use trait_rpc::server::axum::{WebsocketError, handle_websocket};
+use trait_rpc::websocket::axum::{handle_websocket, WebsocketError};
 
 include!("traits/resources.rs");
 
@@ -40,7 +38,7 @@ async fn main() {
 
 async fn handle<R: Debug + Resource + Serialize + DeserializeOwned>(conn: WebSocketUpgrade, server: ResourceServer<R>) -> impl IntoResponse {
     let result =
-        handle_websocket::<Resources<R>, _, _>(conn, server, &(Json, Cbor));
+        handle_websocket::<Resources<R>, _>(conn, server, &(Json, Cbor)).await;
     match result {
         Ok(response) => response,
         Err(WebsocketError::UnsupportedFormat) => StatusCode::BAD_REQUEST.into_response(),
@@ -114,7 +112,7 @@ impl Resource for Author {
 }
 
 impl<T: Resource> ResourcesServer<T> for ResourceServer<T> {
-    async fn subscribe(&self) -> impl Stream<Item=T> + MaybeSend {
+    async fn subscribe(&self) -> impl Stream<Item=T> + Send + 'static {
         tokio_stream::wrappers::BroadcastStream::new(self.new.subscribe()).filter_map(|result| {
             match result {
                 Ok(res) => Some(res),
@@ -138,5 +136,3 @@ impl<T: Resource> ResourcesServer<T> for ResourceServer<T> {
         self.map.write().await.insert(value.id(), value);
     }
 }
-
-impl<R: Resource + Debug> ServerHooks<Resources<R>> for ResourceServer<R> {}

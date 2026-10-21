@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 16b077abadb132fe21d49c842dc9a821580c8db337f4fbf23130c48673189e60 # shrinks to message = ConnectionError(UnknownErrorType(0, ""))
+cc 7ac9a8ccac5b9d14ca4a4f98667a00e9e78ffa1bf90bedad8742997f1d2d5c7d # shrinks to message = Stream { stream_id: StreamID(0), message: Poll }

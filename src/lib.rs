@@ -2,94 +2,48 @@
 #![warn(missing_docs)]
 #![deny(clippy::disallowed_types)]
 
+use futures::future::BoxFuture;
 use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU32, Ordering};
-use futures::Stream;
+use std::sync::Arc;
+use futures::Sink;
 use thiserror::Error;
 
-pub mod client;
+// pub mod client;
 mod ext;
 pub mod format;
-pub mod message;
-pub mod server;
-mod shard_map;
+// pub mod message;
+// pub mod server;
+// pub mod connection;
+pub mod connection;
+// mod shard_map;
 #[path = "macros.rs"]
 #[doc(hidden)]
 pub mod __macros;
 
 pub use pastey::paste as __paste;
 
-pub use crate::client::{Client, RpcError};
+// pub use crate::client::{Client, RpcError};
 pub use macros::rpc;
 
-use crate::format::{ReadFormat, WriteFormat};
-use crate::message::StreamID;
-pub use maybe_send::*;
+// use crate::message::StreamID;
 pub use serde;
+use crate::__macros::imports::Stream;
+use crate::connection::message::{HandleError, RequestID};
+use crate::connection::{ConnectionManager, MethodID, TeardownGuard};
 
-#[cfg(send)]
-mod maybe_send {
-    use futures::Stream;
-    use std::pin::Pin;
-
-    pub use std::sync::Arc as Rc;
-
-    /// Requires Send bound unless `"single-thread"` feature is active
-    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
-    ///
-    /// Currently, Send bounds **are** required where relevant
-    pub trait MaybeSend: Send {}
-    impl<T: Send> MaybeSend for T {}
-
-    /// Requires Sync bound unless `"single-thread"` feature is active
-    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
-    ///
-    /// Currently, Send bounds **are** required where relevant
-    pub trait MaybeSync: Sync {}
-    impl<T: Sync> MaybeSync for T {}
-
-    /// A Boxed Stream which can run on multiple threads
-    pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + 'a>>;
-    /// Am executor which can run futures on multiple threads
-    ///
-    /// This does not spawn futures, instead the executor itself can be shared between threads
-    pub type Executor<'a> = async_executor::Executor<'a>;
+pub mod websocket {
+    #[cfg(feature = "axum-websocket")]
+    pub mod axum;
+    #[cfg(feature = "tokio_tungstenite")]
+    pub mod tokio;
+    #[cfg(all(feature = "browser", target_arch = "wasm32"))]
+    pub mod browser;
 }
-
-#[cfg(nosend)]
-mod maybe_send {
-    use futures::Stream;
-    use std::pin::Pin;
-
-    pub use std::rc::Rc;
-
-    /// Requires Send bound unless `"single-thread"` feature is active
-    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
-    ///
-    /// Currently, Send bounds **are not** required where relevant
-    pub trait MaybeSend {}
-    impl<T> MaybeSend for T {}
-
-    /// Requires Sync bound unless `"single-thread"` feature is active
-    /// This allows dependant crates to disable Send bound if they do not need them (eg: single-thread env)
-    ///
-    /// Currently, Send bounds **are not** required where relevant
-    pub trait MaybeSync {}
-    impl<T> MaybeSync for T {}
-    /// A Boxed Stream which can only run on a single thread
-    pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + 'a>>;
-    /// Am executor which can run futures on a single thread
-    pub type Executor<'a> = async_executor::LocalExecutor<'a>;
-}
+pub mod spawner;
 
 /// This is a trait for the main entry point of the RPC, it describes the types for client,
 /// request and response
 pub trait Rpc: Sized {
-    /// This is the request type accepted by the service
-    type Request: Request + Debug + 'static;
-    /// This is the response type returned by the service
-    type Response: Debug + 'static;
     /// Returns the name of this service
     fn service_name() -> &'static str;
 }
@@ -99,9 +53,9 @@ pub trait RpcWithServer<Server>: Rpc {
     /// The handler type for this server
     type Handler<F>;
     /// Create a new handler from the given server
-    fn handler<F>(server: Server) -> Self::Handler<F>
+    fn handler<F>(server: Server, format: F) -> Self::Handler<F>
     where
-        Self::Handler<F>: Handler<F, Rpc = Self, Server = Server>;
+        Self::Handler<F>: Handler;
 }
 
 /// Defines a RPC request
@@ -110,65 +64,34 @@ pub trait Request {
     fn name(&self) -> &'static str;
 }
 
-#[derive(Debug)]
-struct Series<T>(AtomicU32, PhantomData<T>);
-
-impl<T> Default for Series<T> {
-    fn default() -> Self {
-        Self(AtomicU32::new(0), PhantomData)
-    }
-}
-
-impl<T: From<u32>> Series<T> {
-    fn next(&self) -> T {
-        self.0.fetch_add(1, Ordering::Relaxed).into()
-    }
-}
-
 /// This trait describes a handler which takes a request and calls the appropriate method of
 /// an underlying server implementation, then builds and returns the response
 ///
 /// It also handles converting [`StreamID`]s into [`impl Stream`](Stream)
 ///
 /// Implementations are generated by the `#[rpc]` macro
-pub trait Handler<F>: MaybeSend {
-    /// The Rpc service served by this handler
-    type Rpc: Rpc;
-    /// Underlying server type
-    type Server;
-
-    /// Get underlying server
-    fn server(&self) -> &Self::Server;
-
+pub trait Handler: Send + Sync {
     /// takes the request and returns a response, see [trait documentation](Self) for details
-    fn handle<'a>(
-        &'a self,
-        request: <Self::Rpc as Rpc>::Request,
-        stream_handler: &impl ConnectionController<'a, F>,
-    ) -> impl Future<Output = <Self::Rpc as Rpc>::Response> + MaybeSend;
+    fn handle(
+        &self,
+        request_id: RequestID,
+        method_id: MethodID,
+        request: Vec<u8>,
+        stream_handler: Arc<ConnectionManager>,
+        guard: TeardownGuard,
+    ) -> BoxFuture<'_, Result<Vec<u8>, HandleError>>;
 }
 
-/// Link to the connection to manage streams
-pub trait ConnectionController<'a, F>: MaybeSend + MaybeSync {
-    /// Creates a new stream which, when polled will send a Poll frame on the connection and wait
-    /// for the response
-    fn receiving_stream<I: MaybeSend>(
-        &self,
-        id: StreamID,
-    ) -> impl Future<Output = impl Stream<Item = I>  + MaybeSend> + MaybeSend
-    where
-        F: ReadFormat<I>;
+/// Represents a server implementation that can easily be converted into a [`Handler`]
+pub trait IntoHandler<R, F> {
+    /// Wrap this server in the appropriate Handler type
+    fn into_handler(self, format: F) -> impl Handler + 'static;
+}
 
-    /// Registers the given stream such that when a relevant Poll frame is received on the
-    /// connection, this stream is polled, returns the corresponding [`StreamId`] which should be
-    /// sent to the other end of the connection in a response
-    fn sending_stream<I>(
-        &self,
-        stream: impl Stream<Item = I> + MaybeSend + 'a,
-    ) -> impl Future<Output = StreamID> + MaybeSend
-    where
-        F: WriteFormat<I>,
-        I: MaybeSend + MaybeSync + 'static;
+impl<Server, R, F> IntoHandler<R, F> for Server where R: RpcWithServer<Server>, R::Handler<F>: Handler + 'static {
+    fn into_handler(self, format: F) -> impl Handler + 'static {
+        R::handler(self, format)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -181,3 +104,11 @@ pub enum StreamError {
     /// The value could not be sent, the contained string is the error message
     SendFailed(String),
 }
+
+
+#[allow(dead_code, reason = "only here to provide help debugging")]
+pub(crate) fn assert_future<T>(_: &impl Future<Output=T>) {}
+#[allow(dead_code, reason = "only here to provide help debugging")]
+pub(crate) fn assert_stream<T>(_: &impl Stream<Item=T>) {}
+#[allow(dead_code, reason = "only here to provide help debugging")]
+pub(crate) fn assert_sink<T>(_: &impl Sink<T>) {}

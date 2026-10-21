@@ -1,7 +1,7 @@
 use crate::{Args, Method, Param, Rpc};
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, quote};
-use syn::{Type, parse_quote};
+use syn::{Expr, ExprLit, Lit, LitInt};
 
 impl ToTokens for Rpc {
     fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -43,6 +43,9 @@ impl ToTokens for Args {
 
 impl ToTokens for Method {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        let id = self.id.clone().unwrap_or_else(|| {
+            generate_id(&self.name)
+        });
         let docs = {
             let docs = &self.docs;
             quote! {{
@@ -52,20 +55,14 @@ impl ToTokens for Method {
         let name = &self.name;
         let args = self.args.iter().map(|(name, param)| {
             let user = param.normal();
-            let transport = param.for_transport();
             quote! {{
                 name = #name,
                 user = (#user),
-                transport = #transport,
             }}
         });
         let return_type = {
             let user = self.ret.normal();
-            let transport = self.ret.for_transport();
-            quote! {{
-                user = (#user),
-                transport = #transport,
-            }}
+            quote!((#user))
         };
 
         let streamed_in = self.args.iter().flat_map(|(_, param)| {
@@ -74,6 +71,7 @@ impl ToTokens for Method {
         let streamed_out = self.ret.streamed_types();
 
         tokens.extend(quote! {{
+            id = #id,
             docs = #docs,
             name = #name,
             args = [#(#args)*],
@@ -82,6 +80,23 @@ impl ToTokens for Method {
             streamed_out = [#(#streamed_out),*],
         }});
     }
+}
+
+fn generate_id(name: &Ident) -> Expr {
+    let span = name.span();
+    let name = name.to_string();
+    let bytes = name.as_bytes();
+    let mut hash = 2_166_136_261;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= u32::from(bytes[i]);
+        hash = hash.wrapping_mul(16_777_619);
+        i += 1;
+    }
+    Expr::Lit(ExprLit {
+        attrs: vec![],
+        lit: Lit::Int(LitInt::new(&format!("{hash}_u32"), span)),
+    })
 }
 
 impl Param {
@@ -104,25 +119,6 @@ impl Param {
             Self::Tuple(params) => {
                 let params = params.iter().map(Self::normal);
                 quote! { ( #(#params,)* ) }
-            }
-        }
-    }
-    fn for_transport(&self) -> Type {
-        match self {
-            Self::Simple(ty) => ty.clone(),
-            Self::Stream(_) => parse_quote! { StreamID },
-            Self::Option(param) => {
-                let param = param.for_transport();
-                parse_quote! { Option<#param> }
-            }
-            Self::Result(ok, err) => {
-                let ok = ok.for_transport();
-                let err = err.for_transport();
-                parse_quote! { Result<#ok, #err> }
-            }
-            Self::Tuple(params) => {
-                let params = params.iter().map(Self::for_transport);
-                parse_quote! { ( #(#params,)* ) }
             }
         }
     }
