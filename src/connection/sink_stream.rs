@@ -1,30 +1,47 @@
+//! Support for using a sink/stream combo as a connection, sink/stream should operate on Vec<u8>
+//! and ensure that each Vec<u8> represents a single message
+
 use std::fmt::Display;
 use std::pin::pin;
 use futures::{select, FutureExt, Sink, SinkExt, Stream, StreamExt};
-use tracing::{debug, info, warn};
+use futures::stream::{SplitSink, SplitStream};
+use tracing::{debug, warn};
 use crate::connection::{Connection, ConnectionDriver};
 use crate::connection::message::Message;
 use crate::spawner::Spawner;
 
-pub struct SinkStreamConn<S> {
-    sink_stream: S,
+/// A Sink/Stream based connection, sending and receiving serialised binary messages
+pub struct SinkStreamConn<Sink, Stream> {
+    sink: Sink,
+    stream: Stream,
 }
 
-impl<S> SinkStreamConn<S> where Self: Connection {
-    pub fn new(sink_stream: S) -> Self {
-        Self { sink_stream }
+impl<S, RecvError> SinkStreamConn<SplitSink<S, Vec<u8>>, SplitStream<S>>
+where
+    S: Sink<Vec<u8>, Error: Display> + Stream<Item = Result<Vec<u8>, RecvError>> + Unpin + 'static,
+    RecvError: Display + 'static, {
+    /// New [`SinkStreamConn`] from a value which is both a stream and a sink
+    pub fn new_combined(sink_stream: S) -> Self {
+        let (sink, stream) = sink_stream.split();
+        Self { sink, stream }
     }
 }
 
-impl<S, RecvError> Connection for SinkStreamConn<S>
+impl<Sink, Stream> SinkStreamConn<Sink, Stream> where Self: Connection {
+    /// New [`SinkStreamConn`] from a separate sink and stream
+    pub fn new(sink: Sink, stream: Stream) -> Self {
+        Self { sink, stream }
+    }
+}
+
+impl<Out, In, RecvError> Connection for SinkStreamConn<Out, In>
 where
-    S: Sink<Vec<u8>, Error: Display>,
-    S: Stream<Item = Result<Vec<u8>, RecvError>>,
-    S: Send + Unpin + 'static,
-    RecvError: Display + Send + 'static,
+    Out: Sink<Vec<u8>, Error: Display> + Unpin + 'static,
+    In: Stream<Item = Result<Vec<u8>, RecvError>> + Unpin + 'static,
+    RecvError: Display + 'static,
 {
-    async fn run(mut self, driver: ConnectionDriver, spawner: impl Spawner + 'static) -> Result<(), impl Display> {
-        let (mut sink, mut stream) = self.sink_stream.split();
+    async fn run(self, driver: ConnectionDriver, spawner: impl Spawner + 'static) -> Result<(), impl Display> {
+        let Self { mut sink, mut stream } = self;
         let mut next_out = pin!(driver.next_outgoing_message().fuse());
         loop {
             select! {
@@ -38,13 +55,12 @@ where
                                 break Err(format!("Error from stream: {error}"));
                             }
                         };
-                        let mut should_close = false;
 
                         match Message::deserialise(&bytes) {
                             Ok(message) => {
                                 if let Err(error) = driver.consume_incoming_message(message, &spawner).await {
                                     break Err(format!("Connection error: {error}"));
-                                };
+                                }
                             },
                             Err(error) => {
                                 let error_msg = error.to_string();
@@ -54,7 +70,6 @@ where
                                 };
                             }
                         }
-                        continue
                     }
                     response = next_out => {
                         next_out.set(driver.next_outgoing_message().fuse());

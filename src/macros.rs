@@ -4,7 +4,7 @@ pub mod imports {
     pub use crate::{
         Handler, Rpc, RpcWithServer, StreamError,
         connection::{
-            ConnectionManager, TeardownGuard,
+            ServiceManager, TeardownGuard,
             client::{Client, ClientError},
             message::{StreamID, RequestID, ServiceID, HandleError},
             MethodID
@@ -19,15 +19,8 @@ pub mod imports {
             stream::{Stream, StreamExt},
             future::BoxFuture
         },
-        serde::{Deserialize, Serialize},
-        std::{
-            borrow::Cow,
-            convert::Infallible,
-            marker::PhantomData,
-            sync::Arc,
-        },
-        pastey::paste,
-        tracing,
+        std::marker::PhantomData,
+        tracing
     };
 }
 
@@ -164,7 +157,7 @@ where
         request_id: RequestID,
         method_id: MethodID,
         request: Vec<u8>,
-        manager: Arc<ConnectionManager>,
+        manager: ServiceManager,
         guard: TeardownGuard
     ) -> BoxFuture<Result<Vec<u8>, HandleError>> {
         Box::pin(async move {

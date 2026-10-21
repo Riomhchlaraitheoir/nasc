@@ -1,19 +1,15 @@
 //! Defines a websocket client
 
-use crate::connection::message::Message;
-use crate::connection::{channel::ChannelConnection, client::Client, new_client_conn, Connection};
+use crate::connection::{client::Client, new_client_conn, Connection};
 use crate::format::IsFormat;
+use crate::{PROTOCOL_NAME, PROTOCOL_VERSION};
 use crate::spawner::TokioSpawner;
-use async_channel::RecvError;
-use futures::future::Either;
-use futures::{FutureExt, SinkExt, StreamExt, select};
-use std::pin::pin;
-use axum::extract::ws::WebSocket;
+use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio_tungstenite::{connect_async, WebSocketStream, MaybeTlsStream};
 use tokio_tungstenite::tungstenite::{ClientRequestBuilder, Error, Message as WsMessage};
-use tracing::{Instrument, error, info, info_span};
+use tracing::error;
 use crate::__macros::imports::Sink;
 use crate::connection::sink_stream::SinkStreamConn;
 
@@ -23,9 +19,10 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + Send 
     format: Format,
     on_close: OnClose
 ) -> Result<Client, Error> {
+    let protocol = format!("{PROTOCOL_NAME}.{PROTOCOL_VERSION}.{}", format.subprotocol());
     let (websocket, _) = connect_async(
         ClientRequestBuilder::new(url.as_ref().parse().expect("failed to parse url"))
-            .with_sub_protocol(format.subprotocol()),
+            .with_sub_protocol(protocol),
     )
     .await?;
 
@@ -45,7 +42,7 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + Send 
         Result::<_, <WebSocketStream<MaybeTlsStream<TcpStream>> as Sink<WsMessage>>::Error>::Ok(WsMessage::Binary(bytes.into()))
     });
     let websocket = Box::pin(websocket);
-    let conn = SinkStreamConn::new(websocket);
+    let conn = SinkStreamConn::new_combined(websocket);
 
 
     let client_ready = oneshot::channel();
@@ -57,6 +54,7 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + Send 
         if let Err(error) = conn.run(driver, TokioSpawner).await {
             error!("connection error: {}", error);
         }
+        on_close();
     });
 
     Ok(client_ready.1.await.expect("client failed to start"))

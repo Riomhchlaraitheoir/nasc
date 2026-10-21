@@ -5,11 +5,9 @@ use std::fmt::Display;
 use futures::FutureExt;
 use std::pin::pin;
 use crate::connection::message::Message;
-use crate::connection::{Connection, ConnectionClosed, ConnectionDriver};
+use crate::connection::{Connection, ConnectionDriver};
 use async_channel::{Receiver, Sender, bounded};
-use futures::future::FusedFuture;
 use futures::select;
-use futures::stream::FusedStream;
 use tracing::error;
 use crate::spawner::Spawner;
 
@@ -64,7 +62,7 @@ impl Connection for ChannelConnection {
                     if let Ok(message) = result {
                         if let Err(error) = driver.consume_incoming_message(message, &spawner).await {
                             return Err(format!("Connection Error: {error}"));
-                        };
+                        }
                     } else {
                         return Ok(());
                     }

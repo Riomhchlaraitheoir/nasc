@@ -19,32 +19,32 @@ workspace = true
 
 [workspace.lints.clippy]
 pedantic = { level = "warn" }
-nursery = { level = "warn" }
+nursery = { level = "warn" } # warn nursery by default, allow annooying lints below
 missing_errors_doc = { level = "allow", priority = 1 }
 missing_panics_doc = { level = "allow", priority = 1 }
 allow_attributes_without_reason = { level = "warn", priority = 1 }
-unused_async_trait_impl = { level = "allow", priority = 1 }
+missing_const_for_fn = { level = "allow", priority = 1 }
+
 
 [features]
-single-thread = []
 axum-websocket = ["dep:axum", "dep:tower"]
-browser = ["dep:web-sys", "dep:wasm-bindgen-futures", "single-thread", "dep:gloo-net"]
+browser-websocket = ["dep:web-sys", "dep:wasm-bindgen-futures", "dep:gloo-net"]
 tokio_tungstenite = ["dep:tokio-tungstenite", "tokio"]
 tokio = ["dep:tokio"]
 
 # Formats
-json = ["dep:serde_json"]
-browser-json = ["dep:serde-wasm-bindgen", "dep:web-sys", "dep:wasm-bindgen-futures"]
-cbor = ["dep:ciborium"]
+json = ["serde", "dep:serde_json"]
+browser-json = ["serde", "dep:serde-wasm-bindgen", "dep:web-sys", "dep:wasm-bindgen-futures"]
+cbor = ["serde", "dep:ciborium"]
 
 # Internal helper features for CI/CD, defined in a single place to avoid mistakes when adding/removeing features
 __test = ["axum-websocket", "json", "cbor", "tokio_tungstenite", "dep:tokio"]
-__wasm_test = ["json", "cbor", "browser", "browser-json"]
+__wasm_test = ["json", "cbor", "browser-websocket", "browser-json"]
 
 [dependencies]
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.228", optional = true }
 thiserror = "2.0.17"
-axum = { version = "0.8.7", optional = true, features = ["ws"]}
+axum = { version = "0.8.9", optional = true, features = ["ws"]}
 tower = { version = "0.5.2", optional = true }
 macros = { package = "trait-rpc-macros", path = "macros" }
 futures = { version = "0.3.31", features = ["unstable", "bilock"] }
@@ -84,11 +84,11 @@ async-executor = "1.13.3"
 tracing = { version = "0.1.44", features = ["log"] }
 simple_logger = "5.2.0"
 tokio-stream = { version = "0.1.19", features = ["sync"] }
-proptest = "1.12.0"
-proptest-derive = "0.9.0"
 
 [target.'cfg(not(target_arch="wasm32"))'.dev-dependencies]
 axum = { version = "0.8.7", features = ["ws", "macros"]}
+proptest = "1.12.0"
+proptest-derive = "0.9.0"
 
 [build-dependencies]
 cfg_aliases = "0.2.2"

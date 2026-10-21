@@ -38,10 +38,15 @@ async fn main() {
 
 async fn handle<R: Debug + Resource + Serialize + DeserializeOwned>(conn: WebSocketUpgrade, server: ResourceServer<R>) -> impl IntoResponse {
     let result =
-        handle_websocket::<Resources<R>, _>(conn, server, &(Json, Cbor)).await;
+        handle_websocket::<Resources<R>, _>(conn, server, &(Json, Cbor));
     match result {
         Ok(response) => response,
-        Err(WebsocketError::UnsupportedFormat) => StatusCode::BAD_REQUEST.into_response(),
+        Err(
+            WebsocketError::UnsupportedFormat
+            | WebsocketError::UnsupportedProtocol
+            | WebsocketError::UnsupportedVersion
+            | WebsocketError::ToStr(_),
+        ) => StatusCode::BAD_REQUEST.into_response(),
     }
 }
 

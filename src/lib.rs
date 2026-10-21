@@ -4,39 +4,36 @@
 
 use futures::future::BoxFuture;
 use std::fmt::Debug;
-use std::sync::Arc;
 use futures::Sink;
 use thiserror::Error;
 
-// pub mod client;
 mod ext;
 pub mod format;
-// pub mod message;
-// pub mod server;
-// pub mod connection;
 pub mod connection;
-// mod shard_map;
 #[path = "macros.rs"]
 #[doc(hidden)]
 pub mod __macros;
 
 pub use pastey::paste as __paste;
 
-// pub use crate::client::{Client, RpcError};
 pub use macros::rpc;
 
-// use crate::message::StreamID;
-pub use serde;
 use crate::__macros::imports::Stream;
 use crate::connection::message::{HandleError, RequestID};
-use crate::connection::{ConnectionManager, MethodID, TeardownGuard};
+use crate::connection::{MethodID, ServiceManager, TeardownGuard};
 
+/// The protocol name used by this crate
+pub const PROTOCOL_NAME: &str = env!("CARGO_PKG_NAME");
+/// The protocol version supported by this crate
+pub const PROTOCOL_VERSION: &str = env!("CARGO_PKG_VERSION_MAJOR");
+
+/// Organisation module for websocket support
 pub mod websocket {
     #[cfg(feature = "axum-websocket")]
     pub mod axum;
     #[cfg(feature = "tokio_tungstenite")]
     pub mod tokio;
-    #[cfg(all(feature = "browser", target_arch = "wasm32"))]
+    #[cfg(all(feature = "browser-websocket", target_arch = "wasm32"))]
     pub mod browser;
 }
 pub mod spawner;
@@ -77,7 +74,7 @@ pub trait Handler: Send + Sync {
         request_id: RequestID,
         method_id: MethodID,
         request: Vec<u8>,
-        stream_handler: Arc<ConnectionManager>,
+        stream_handler: ServiceManager,
         guard: TeardownGuard,
     ) -> BoxFuture<'_, Result<Vec<u8>, HandleError>>;
 }
@@ -107,8 +104,8 @@ pub enum StreamError {
 
 
 #[allow(dead_code, reason = "only here to provide help debugging")]
-pub(crate) fn assert_future<T>(_: &impl Future<Output=T>) {}
+pub(crate) const fn assert_future<T>(_: &impl Future<Output=T>) {}
 #[allow(dead_code, reason = "only here to provide help debugging")]
-pub(crate) fn assert_stream<T>(_: &impl Stream<Item=T>) {}
+pub(crate) const fn assert_stream<T>(_: &impl Stream<Item=T>) {}
 #[allow(dead_code, reason = "only here to provide help debugging")]
-pub(crate) fn assert_sink<T>(_: &impl Sink<T>) {}
+pub(crate) const fn assert_sink<T>(_: &impl Sink<T>) {}

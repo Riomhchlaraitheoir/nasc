@@ -1,20 +1,18 @@
 //! Defines a websocket client
 
-use crate::connection::channel::ChannelConnection;
+use crate::__macros::imports::Sink;
 use crate::connection::client::Client;
-use crate::connection::message::Message;
-use crate::connection::new_client_conn;
+use crate::connection::sink_stream::SinkStreamConn;
+use crate::connection::{Connection, new_client_conn};
 use crate::format::IsFormat;
+use crate::{PROTOCOL_VERSION, PROTOCOL_NAME};
 use crate::spawner::BrowserSpawner;
-use async_channel::RecvError;
 use futures::channel::oneshot;
-use futures::future::Either;
-use futures::{FutureExt, SinkExt, StreamExt, select};
+use futures::{SinkExt, StreamExt};
 use gloo_net::websocket::futures::WebSocket;
-use gloo_net::websocket::{Message as WsMessage, WebSocketError};
-use std::pin::pin;
+use gloo_net::websocket::Message as WsMessage;
 use thiserror::Error;
-use tracing::{Instrument, debug, error, info, info_span};
+use tracing::{debug, error};
 use wasm_bindgen_futures::spawn_local;
 
 /// Error from websocket
@@ -35,9 +33,27 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + 'stat
     on_close: OnClose,
 ) -> Result<Client, WebsocketError> {
     debug!("Connecting websocket to {}", url.as_ref());
-    let websocket = WebSocket::open_with_protocol(url.as_ref(), format.subprotocol())
+    let protocol = format!("{PROTOCOL_NAME}.{PROTOCOL_VERSION}.{}", format.subprotocol());
+    let websocket = WebSocket::open_with_protocol(url.as_ref(), &protocol)
         .map_err(|e| WebsocketError::ConnectionError(e.message))?;
-    let (conn, request_sender, response_receiver) = ChannelConnection::pair();
+
+    let websocket = websocket.filter_map(async |result| {
+        match result {
+            Ok(message) => {
+                if let WsMessage::Bytes(bytes) = message {
+                    Some(Ok(bytes))
+                } else {
+                    None
+                }
+            }
+            Err(error) => Some(Err(error)),
+        }
+    });
+    let websocket = websocket.with(async |bytes: Vec<u8>| {
+        Result::<_, <WebSocket as Sink<WsMessage>>::Error>::Ok(WsMessage::Bytes(bytes))
+    });
+    let websocket = Box::pin(websocket);
+    let conn = SinkStreamConn::new_combined(websocket);
 
     let client_ready = oneshot::channel();
     spawn_local(async {
@@ -45,93 +61,12 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + 'stat
         let Ok(()) = client_ready.0.send(client) else {
             return
         };
-        if let Err(error) = driver.run(conn, BrowserSpawner).await {
+        if let Err(error) = conn.run(driver, BrowserSpawner).await {
             error!("connection error: {}", error);
         }
+        on_close();
     });
 
-
-    spawn_local(async move {
-        let (mut outgoing, mut incoming) = websocket.split();
-        let mut next_request = pin!(incoming.next().fuse());
-        let mut next_response = pin!(response_receiver.recv().fuse());
-        loop {
-            select! {
-                result = next_request => {
-                    match result {
-                        Some(request) => {
-                            match parse_message(request) {
-                                None => {},
-                                Some(Either::Left(bytes)) => {
-                                    let message = match Message::deserialise(&bytes) {
-                                        Ok(message) => message,
-                                        Err(error) => {
-                                            error!("Failed to parse message: {error}");
-                                            let message = WsMessage::Bytes(Message::ConnectionError(error.into()).serialise());
-                                            if let Err(error) = outgoing.send(message).await {
-                                                error!("failed to send message, closing websocket: {error}");
-                                                break
-                                            }
-                                            continue
-                                        }
-                                    };
-                                    if let Err(error) = request_sender.send(message).await {
-                                        error!("failed to send parsed request, closing websocket: {error}");
-                                        break
-                                    }
-                                },
-                                Some(Either::Right(message)) => {
-                                    if let Err(error) = outgoing.send(message).await {
-                                        error!("failed to send message, closing websocket: {error}");
-                                        break
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            return
-                        }
-                    }
-                },
-                result = next_response => {
-                    match result {
-                        Ok(message) => {
-                            let bytes = message.serialise();
-                            let result = outgoing.send(WsMessage::Bytes(bytes)).await;
-                            if let Err(error) = result {
-                                error!("failed to send response, closing websocket: {error}");
-                                break
-                            }
-
-                        }
-                        Err(error) => {
-                            let _: RecvError = error;
-                            on_close();
-                            break
-                        }
-                    }
-                },
-            }
-        }
-    }.instrument(info_span!("websocket message parser")));
     Ok(client_ready.1.await.expect("client failed to start"))
 }
 
-fn parse_message(result: Result<WsMessage, WebSocketError>) -> Option<Either<Vec<u8>, WsMessage>> {
-    let message = match result {
-        Ok(message) => message,
-        Err(error) => {
-            info!("Websocket disconnected with error: {error}");
-            return None;
-        }
-    };
-    match message {
-        WsMessage::Text(text) => {
-            error!("Received unexpected text message: {text}");
-            None
-        },
-        WsMessage::Bytes(bytes) => {
-            Some(Either::Left(bytes))
-        },
-    }
-}

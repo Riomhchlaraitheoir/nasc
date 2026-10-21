@@ -8,10 +8,12 @@ include!("traits/todo.rs");
 
 #[tokio::main]
 async fn main() {
-    let websocket = new_websocket_transport("ws://localhost:8080/api/todo", Json, ||{
-        println!("Client closed");
-    }).await.unwrap();
-    let client = TodoService::client(websocket, Json);
+    let client = {
+        let client = new_websocket_transport("ws://localhost:8080/api/todo", Json, ||{
+            println!("Client closed");
+        }).await.unwrap();
+        TodoService::client(client, Json)
+    };
     for todo in client.get_todos().await.expect("get_todos failed") {
         println!("{todo:?}");
     }

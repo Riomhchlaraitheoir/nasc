@@ -1,7 +1,7 @@
 //! Defines the [`Client`] type which is used to send requests and receive responses
 
 use crate::connection::message::{HandleError, Message, ServiceID, StreamMessage};
-use crate::connection::{ConnectionManager, MethodID};
+use crate::connection::{ConnectionManager, MethodID, ServiceManager};
 use crate::connection::TeardownGuard;
 use futures::channel::oneshot;
 use std::error::Error;
@@ -48,8 +48,8 @@ impl Client {
 
     #[must_use]
     /// Returns a [`ServiceManager`]
-    pub const fn service_manager(&self) -> &Arc<ConnectionManager> {
-        &self.manager
+    pub fn service_manager(&self) -> ServiceManager {
+        ServiceManager(self.manager.clone())
     }
 }
 
@@ -102,8 +102,8 @@ pub(super) enum ClientStreamState {
 impl Stream for ClientStream {
     type Item = Vec<u8>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut stream = self.project();
-        let mut state = mem::replace(stream.state, ClientStreamState::Waiting);
+        let stream = self.project();
+        let state = mem::replace(stream.state, ClientStreamState::Waiting);
         let mut send = match state {
             ClientStreamState::Ready => {
                 let sender = stream.manager.message_sender.clone();

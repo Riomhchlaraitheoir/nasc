@@ -12,7 +12,7 @@ use crate::connection::message::{
     ConnectionError, HandleError, Message, RequestID, ServiceID, StreamID, StreamMessage,
 };
 use crate::spawner::Spawner;
-use async_channel::{bounded, unbounded, Receiver, RecvError, Sender};
+use async_channel::{bounded, unbounded, Receiver, Sender};
 use async_lock::Mutex;
 use derive_more::Display;
 use futures::channel::oneshot;
@@ -22,7 +22,6 @@ use futures::{FutureExt, StreamExt};
 use log::warn;
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
-use std::ops::DerefMut;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -32,7 +31,7 @@ use whirlwind::ShardMap;
 
 /// Identifies a certain request
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, Display, Ord, PartialOrd)]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch = "wasm32")), derive(proptest_derive::Arbitrary))]
 pub struct MethodID(u32);
 
 impl MethodID {
@@ -66,18 +65,19 @@ impl<T: From<u32>> Series<T> {
 }
 
 /// Represents the underlying connection
-pub trait Connection: Send {
+pub trait Connection {
+    /// Run the connection, handling incoming and outgoing messages
     fn run(
         self,
         driver: ConnectionDriver,
         spawner: impl Spawner + 'static,
-    ) -> impl Future<Output=Result<(), impl Display>> + Send + 'static;
+    ) -> impl Future<Output=Result<(), impl Display>> + 'static;
 }
 
 /// A signal that the connection is closed and the manager should drop
 pub struct ConnectionClosed;
 
-pub struct ConnectionManager {
+struct ConnectionManager {
     response_waiters: ShardMap<RequestID, ResponseWaiter>,
     incoming_streams: ShardMap<StreamID, Sender<Vec<u8>>>,
     service_ids: Series<ServiceID>,
@@ -87,6 +87,7 @@ pub struct ConnectionManager {
     streams: ShardMap<StreamID, ServerStream>,
     message_sender: Sender<Message>,
     priority_message_sender: Sender<Message>,
+    is_server: bool,
 }
 
 type ServerStream = (Arc<Mutex<BoxStream<'static, Vec<u8>>>>, TeardownGuard);
@@ -113,6 +114,7 @@ pub async fn new_client_conn() -> (Client, ConnectionDriver) {
         streams: ShardMap::new(),
         message_sender,
         priority_message_sender,
+        is_server: false,
     };
     let manager = Arc::new(manager);
     let driver = ConnectionDriver {
@@ -145,6 +147,7 @@ pub async fn new_server_conn(handler: impl Handler + 'static) -> ConnectionDrive
         streams: ShardMap::new(),
         message_sender,
         priority_message_sender,
+        is_server: true,
     };
     manager
         .handlers
@@ -185,7 +188,7 @@ impl ConnectionManager {
                     let manager = Arc::clone(self);
                     executor.spawn(async move {
                         let result = handler
-                            .handle(request_id, method_id, payload, manager, guard)
+                            .handle(request_id, method_id, payload, ServiceManager(manager), guard)
                             .await;
                         if let Err(error) = message_sender
                             .send(Message::Response {
@@ -213,8 +216,12 @@ impl ConnectionManager {
                 }
             }
             Message::ServiceDropped { service_id } => {
-                if self.handlers.remove(&service_id).await.is_none() {
-                    warn!("Service {service_id} not found");
+                if self.is_server == service_id.is_server_side() { // if service is served by the local peer
+                    if self.handlers.remove(&service_id).await.is_none() {
+                        warn!("Service {service_id} not found");
+                    }
+                } else {
+                    todo!("Close client somehow")
                 }
             }
             Message::ConnectionError(error) => return Err(error),
@@ -284,59 +291,68 @@ impl ConnectionManager {
             }
         }
     }
+}
 
+/// Allows creation of new services/streams
+pub struct ServiceManager(Arc<ConnectionManager>);
+
+impl ServiceManager {
+    /// Create a new outgoing service
     pub async fn outgoing_service(
         &self,
         handler: impl Handler + 'static,
         guard: TeardownGuard,
     ) -> ServiceID {
-        let service_id = self.service_ids.next();
+        let service_id = self.0.service_ids.next();
         debug!("Outgoing service {service_id}");
-        self.handlers
+        self.0.handlers
             .insert(service_id, (Arc::new(handler), guard))
             .await;
         service_id
     }
 
+    /// Create a new incoming service
     #[allow(clippy::unused_async, reason = "Keep this async for forward compatability and consistency with other similar methods")]
     pub async fn incoming_service(
-        self: &Arc<Self>,
+        &self,
         service_id: ServiceID,
         guard: TeardownGuard,
     ) -> Client {
         debug!("Received incoming service {service_id}");
         Client {
-            manager: Arc::clone(self),
+            manager: Arc::clone(&self.0),
             service_id,
             guard,
         }
     }
 
+    /// Create a new outgoing stream
     pub async fn outgoing_stream(
         &self,
         stream: impl Stream<Item=Vec<u8>> + Send + 'static,
         guard: TeardownGuard,
     ) -> StreamID {
-        let stream_id = self.stream_ids.next();
+        let stream_id = self.0.stream_ids.next();
         debug!("Outgoing stream {stream_id}");
-        self.streams
+        self.0.streams
             .insert(stream_id, (Arc::new(Mutex::new(Box::pin(stream))), guard))
             .await;
         stream_id
     }
 
+    /// Create a new incoming stream
     pub async fn incoming_stream(
-        self: &Arc<Self>,
+        &self,
         stream_id: StreamID,
         guard: TeardownGuard,
-    ) -> impl Stream<Item=Vec<u8>> + Send + 'static {
+    ) -> impl Stream<Item=Vec<u8>> + Send + 'static + use<> {
         debug!("Received incoming stream {stream_id}");
         let (sender, receiver) = bounded(10);
-        self.incoming_streams.insert(stream_id, sender).await;
+        self.0.incoming_streams.insert(stream_id, sender).await;
         ClientStream {
             receiver,
             guard,
-            manager: Arc::clone(self),
+            manager: Arc::clone(&self.0),
             stream_id,
             state: ClientStreamState::Ready
         }
@@ -356,10 +372,15 @@ pub struct ConnectionDriver { // TODO: make fields pub and allow Connection impl
 }
 
 impl ConnectionDriver {
+    /// Consume the incoming message and handle it appropriately, this function will spawn a new
+    /// task if it does anything that might take some time (calling handler methods, polling streams)
     pub async fn consume_incoming_message(&self, message: Message, executor: &impl Spawner) -> Result<(), ConnectionError> {
         self.manager.handle_message(message, executor).await
     }
 
+    /// Get all remaining message that are waiting to be sent, should be used after teardown signal
+    /// to ensure remote peer receives all outstanding notices of dropped streams/services to ensure
+    /// it can close safely too
     pub fn flush_outgoing_messages(&self) -> impl Iterator<Item=Message> {
         std::iter::from_fn(|| {
             self.priority_message_receiver.try_recv().ok()
@@ -368,6 +389,11 @@ impl ConnectionDriver {
         }))
     }
 
+    /// Returns the next outgoing message, may take some time to actually return if no message is
+    /// currently queued
+    ///
+    /// Returns None if there are no more messages to send, this is not expected to happen prior
+    /// to the teardown signal
     pub async fn next_outgoing_message(&self) -> Option<Message> {
         let next_priority = pin!(self.priority_message_receiver.recv());
         let next = pin!(self.message_receiver.recv());
@@ -375,8 +401,10 @@ impl ConnectionDriver {
         result.ok()
     }
 
+    /// This future returns when all clients/handlers have been dropped, this signals that the
+    /// connection is no longer needed and can be closed
     pub async fn teardown(&self) {
-        self.teardown_signal.lock().await.deref_mut().await
+        (&mut *self.teardown_signal.lock().await).await;
     }
 }
 

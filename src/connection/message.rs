@@ -8,12 +8,12 @@ use thiserror::Error;
 
 /// Identifies a certain service
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, From, Into, Display, Ord, PartialOrd)]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub struct ServiceID(u32);
 
 /// Identifies a certain stream
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, From, Into, Display, Ord, PartialOrd)]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub struct StreamID(u32);
 
 impl ServiceID {
@@ -26,7 +26,7 @@ impl ServiceID {
 
 /// Identifies a certain request
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, From, Display, Ord, PartialOrd)]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub struct RequestID(u32);
 
 /// An RPC message
@@ -36,7 +36,7 @@ pub struct RequestID(u32);
 /// For binary serialisation see [`length`](Self::length), [`serialise`](Self::serialise),
 /// [`serialise_into`](Self::serialise_into) and [`deserialise`](Self::deserialise)
 #[derive(Debug, Eq, PartialEq)]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub enum Message {
     /// Represents a request to a service/method
     Request {
@@ -59,8 +59,11 @@ pub enum Message {
         /// - [`Err`]: The method could not be called, this is the relevant error
         result: Result<Vec<u8>, HandleError>,
     },
+    /// A stream-related message
     Stream {
+        /// The ID of the stream
         stream_id: StreamID,
+        /// The stream messge
         message: StreamMessage,
     },
     /// The client for this service was dropped, the correspond handler can also be dropped
@@ -72,18 +75,22 @@ pub enum Message {
     ConnectionError(ConnectionError),
 }
 
+/// A Stream-related message for a particular stream
 #[derive(Debug, Eq, PartialEq)]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub enum StreamMessage {
+    /// Poll the stream
     Poll,
+    /// Item from stream/stream exhausted
     Item(Option<Vec<u8>>),
+    /// Stream client-side has been dropped
     Dropped,
 }
 
 /// Indicates that the transport was successful, but the response indicated some problem
 #[derive(Debug, Eq, PartialEq, Error, Clone)]
 #[non_exhaustive]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub enum HandleError {
     /// No service found by the selected ID
     #[error("Service not found")]
@@ -98,14 +105,14 @@ pub enum HandleError {
     #[error("Internal Server Error: {0}")]
     InternalError(String),
     /// Unknown error type
-    #[cfg_attr(test, proptest(skip))]
+    #[cfg_attr(all(test, not(target_arch="wasm32")), proptest(skip))]
     #[error("Unknown error type")]
     UnknownErrorType(u8, String),
 }
 
 /// An error on a connection which is not related to any particular request
 #[derive(Error, Debug, Eq, PartialEq)]
-#[cfg_attr(test, derive(proptest_derive::Arbitrary))]
+#[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 #[non_exhaustive]
 pub enum ConnectionError {
     /// The frame structure itself is corrupted or violates the protocol rules.
@@ -117,7 +124,7 @@ pub enum ConnectionError {
     #[error("Internal error: {0}")]
     InternalError(String),
     /// Unknown error type
-    #[cfg_attr(test, proptest(skip))]
+    #[cfg_attr(all(test, not(target_arch="wasm32")), proptest(skip))]
     #[error("Unknown error type")]
     UnknownErrorType(u8, String),
 }
@@ -367,7 +374,7 @@ impl Message {
                 buf.write_str(message);
             }
             Self::Stream {
-                stream_id: stream_id,
+                stream_id,
                 message: msg,
             } => {
                 let tag = match msg {
@@ -621,7 +628,7 @@ impl From<MessageParseError> for Message {
 }
 
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch="wasm32")))]
 mod tests {
     use proptest::arbitrary::any;
     use proptest::prelude::ProptestConfig;

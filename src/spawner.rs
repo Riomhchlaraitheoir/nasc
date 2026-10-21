@@ -11,7 +11,7 @@ pub trait Spawner: Send + Sync {
 
 impl<S: Spawner> Spawner for Arc<S> {
     fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) {
-        (**self).spawn(f)
+        (**self).spawn(f);
     }
 }
 
@@ -27,10 +27,10 @@ impl Spawner for TokioSpawner {
 }
 
 /// Spawner implementation for browser
-#[cfg(feature = "browser")]
+#[cfg(feature = "browser-websocket")]
 pub struct BrowserSpawner;
 
-#[cfg(feature = "browser")]
+#[cfg(feature = "browser-websocket")]
 impl Spawner for BrowserSpawner {
     fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) {
         wasm_bindgen_futures::spawn_local(f);

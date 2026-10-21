@@ -104,7 +104,7 @@ pub trait FormatSet: Clone {
     type Format;
 
     /// Get a format that matches the type string
-    fn for_subprotocol(&self, subprotocol: &impl PartialEq<str>) -> Option<Self::Format>;
+    fn for_subprotocol(&self, subprotocol: &str) -> Option<Self::Format>;
 
     /// Get a list of all format types strings
     fn subprotocols(&self) -> Vec<&'static str>;
@@ -112,7 +112,7 @@ pub trait FormatSet: Clone {
 
 impl<A: FormatSet> FormatSet for (A,) {
     type Format = A::Format;
-    fn for_subprotocol(&self, subprotocol: &impl PartialEq<str>) -> Option<Self::Format> {
+    fn for_subprotocol(&self, subprotocol: &str) -> Option<Self::Format> {
         let (a,) = self;
         a.for_subprotocol(subprotocol)
     }
@@ -125,7 +125,7 @@ impl<A: FormatSet> FormatSet for (A,) {
 
 impl<A: FormatSet, B: FormatSet> FormatSet for (A, B) {
     type Format = EitherFormat<A::Format, B::Format>;
-    fn for_subprotocol(&self, subprotocol: &impl PartialEq<str>) -> Option<Self::Format> {
+    fn for_subprotocol(&self, subprotocol: &str) -> Option<Self::Format> {
         let (a, b) = self;
         a.for_subprotocol(subprotocol).map(EitherFormat::Left)
             .or_else(|| b.for_subprotocol(subprotocol).map(EitherFormat::Right))
@@ -140,7 +140,7 @@ impl<A: FormatSet, B: FormatSet> FormatSet for (A, B) {
 
 impl<A: FormatSet, B: FormatSet, C: FormatSet> FormatSet for (A, B, C) {
     type Format = <((A, B), C) as FormatSet>::Format;
-    fn for_subprotocol(&self, subprotocol: &impl PartialEq<str>) -> Option<Self::Format> {
+    fn for_subprotocol(&self, subprotocol: &str) -> Option<Self::Format> {
         let (a, b, c) = self.clone();
         FormatSet::for_subprotocol(&((a, b), c), subprotocol)
     }
@@ -154,7 +154,7 @@ impl<A: FormatSet, B: FormatSet, C: FormatSet> FormatSet for (A, B, C) {
 impl<F: IsFormat> FormatSet for F {
     type Format = F;
 
-    fn for_subprotocol(&self, subprotocol: &impl PartialEq<str>) -> Option<Self::Format> {
+    fn for_subprotocol(&self, subprotocol: &str) -> Option<Self::Format> {
         if subprotocol == self.subprotocol() {
             Some(self.clone())
         } else {

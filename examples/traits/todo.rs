@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(crate = "::trait_rpc::serde")]
-#[allow(unused)]
 pub struct Todo {
     name: String,
     description: String,

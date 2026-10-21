@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use trait_rpc::format::cbor::Cbor;
 use trait_rpc::format::json::Json;
-use trait_rpc::websocket::axum::{handle_websocket, WebsocketError};
+use trait_rpc::websocket::axum::{WebsocketError, handle_websocket};
 
 include!("traits/todo.rs");
 
@@ -62,10 +62,14 @@ async fn main() {
 }
 
 async fn service_websocket(conn: WebSocketUpgrade, server: Todos) -> impl IntoResponse {
-    let result =
-        handle_websocket::<TodoService, _>(conn, server, &(Json, Cbor)).await;
+    let result = handle_websocket::<TodoService, _>(conn, server, &(Json, Cbor));
     match result {
         Ok(response) => response,
-        Err(WebsocketError::UnsupportedFormat) => StatusCode::BAD_REQUEST.into_response(),
+        Err(
+            WebsocketError::UnsupportedFormat
+            | WebsocketError::UnsupportedProtocol
+            | WebsocketError::UnsupportedVersion
+            | WebsocketError::ToStr(_),
+        ) => StatusCode::BAD_REQUEST.into_response(),
     }
 }
