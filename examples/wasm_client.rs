@@ -1,3 +1,4 @@
+use trait_rpc::connection::ConnectionOptions;
 use trait_rpc::format::json::Json;
 use trait_rpc::websocket::browser::new_websocket_transport;
 
@@ -6,7 +7,7 @@ include!("traits/todo.rs");
 fn main() {
     wasm_bindgen_futures::spawn_local(async move {
         let client = {
-            let client = new_websocket_transport("http://localhost:8080/api/todo", Json, ||{}).await.expect("Failed to connect");
+            let client = new_websocket_transport("http://localhost:8080/api/todo", Json, ||{}, ConnectionOptions::default()).await.expect("Failed to connect");
             TodoService::client(client, Json)
         };
         for todo in client.get_todos().await.expect("get_todos failed") {

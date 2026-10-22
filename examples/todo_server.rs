@@ -10,6 +10,7 @@ use derive_more::Deref;
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use trait_rpc::connection::ConnectionOptions;
 use trait_rpc::format::cbor::Cbor;
 use trait_rpc::format::json::Json;
 use trait_rpc::websocket::axum::{WebsocketError, handle_websocket};
@@ -62,7 +63,7 @@ async fn main() {
 }
 
 async fn service_websocket(conn: WebSocketUpgrade, server: Todos) -> impl IntoResponse {
-    let result = handle_websocket::<TodoService, _>(conn, server, &(Json, Cbor));
+    let result = handle_websocket::<TodoService, _>(conn, server, &(Json, Cbor), ConnectionOptions::default());
     match result {
         Ok(response) => response,
         Err(

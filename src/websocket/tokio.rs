@@ -1,9 +1,9 @@
 //! Defines a websocket client
 
-use crate::connection::{client::Client, new_client_conn, Connection};
+use crate::connection::{client::Client, new_client_conn, Connection, ConnectionOptions};
 use crate::format::IsFormat;
 use crate::{PROTOCOL_NAME, PROTOCOL_VERSION};
-use crate::spawner::TokioSpawner;
+use crate::runtime::TokioRuntime;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -17,8 +17,9 @@ use crate::connection::sink_stream::SinkStreamConn;
 pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + Send + Sync + 'static>(
     url: impl AsRef<str>,
     format: Format,
-    on_close: OnClose
-) -> Result<Client, Error> {
+    on_close: OnClose,
+    options: ConnectionOptions
+) -> Result<Client<TokioRuntime>, Error> {
     let protocol = format!("{PROTOCOL_NAME}.{PROTOCOL_VERSION}.{}", format.subprotocol());
     let (websocket, _) = connect_async(
         ClientRequestBuilder::new(url.as_ref().parse().expect("failed to parse url"))
@@ -47,11 +48,11 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + Send 
 
     let client_ready = oneshot::channel();
     tokio::spawn(async {
-        let (client, driver) = new_client_conn().await;
+        let (client, driver) = new_client_conn(options, TokioRuntime).await;
         let Ok(()) = client_ready.0.send(client) else {
             return
         };
-        if let Err(error) = conn.run(driver, TokioSpawner).await {
+        if let Err(error) = conn.run(driver).await {
             error!("connection error: {}", error);
         }
         on_close();

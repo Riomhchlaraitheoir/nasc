@@ -5,10 +5,11 @@ pub mod imports {
         Handler, Rpc, RpcWithServer, StreamError,
         connection::{
             ServiceManager, TeardownGuard,
-            client::{Client, ClientError},
+            client::{Client, ClientError, ClientResponseFuture},
             message::{StreamID, RequestID, ServiceID, HandleError},
             MethodID
         },
+        runtime::AsyncRuntime,
         format::{Format, ReadFormat, WriteFormat},
         Request as RpcRequest,
         __add_stream_bounds, method_id, __transport_type, __for_special_values,
@@ -94,7 +95,7 @@ impl<$($generics),*> Rpc for $name<$($generics),*> where (): Sized, $($generics:
 }
 
 impl<$($generics),*> $name<$($generics),*> where ():Sized, $($generics: 'static,)* $($where_bounds)* {
-    pub fn client<_Format>(client: Client, format: _Format) -> impl [<$name Client>]<$($generics)*>
+    pub fn client<_Format, _Runtime: AsyncRuntime>(client: Client<_Runtime>, format: _Format) -> impl [<$name Client>]<$($generics)*>
     where
         $(_Format: WriteFormat<($(__transport_type!($($arg_type)*),)*)>,)*
         $(_Format: ReadFormat<__transport_type!($($return_type)*)>,)*
@@ -115,9 +116,9 @@ impl<$($generics),*> $name<$($generics),*> where ():Sized, $($generics: 'static,
 
 
 impl<_Server: [<$name Server>]<$($generics),*>, $($generics),*> RpcWithServer<_Server> for $name<$($generics),*> where ():Sized,  $($generics: Send + 'static,)* $($where_bounds)* {
-    type Handler<_Format> = [<$name Handler>]<_Server, _Format, $($generics),*>;
+    type Handler<_Format, _Runtime> = [<$name Handler>]<_Server, _Format, $($generics),*>;
 
-    fn handler<_Format>(server: _Server, format: _Format) ->  Self::Handler<_Format> {
+    fn handler<_Format, _Runtime: AsyncRuntime>(server: _Server, format: _Format) ->  Self::Handler<_Format, _Runtime> {
         [<$name Handler>]{server, format, _phantom: PhantomData::<fn() -> ($($generics,)*)>}
     }
 }
@@ -140,7 +141,7 @@ pub struct [<$name Handler>]<_Server, _Format $(,$generics)*>{
     _phantom: PhantomData<fn() -> ($($generics,)*)>
 }
 
-impl<_Server: [<$name Server>]<$($generics,)*>, _Format, $($generics,)*> Handler for [<$name Handler>]<_Server, _Format, $($generics),*>
+impl<_Runtime: AsyncRuntime, _Server: [<$name Server>]<$($generics,)*>, _Format, $($generics,)*> Handler<_Runtime> for [<$name Handler>]<_Server, _Format, $($generics),*>
 where
     ():Sized,
     $(_Format: ReadFormat<($(__transport_type!($($arg_type)*),)*)>,)*
@@ -157,7 +158,7 @@ where
         request_id: RequestID,
         method_id: MethodID,
         request: Vec<u8>,
-        manager: ServiceManager,
+        manager: ServiceManager<_Runtime>,
         guard: TeardownGuard
     ) -> BoxFuture<Result<Vec<u8>, HandleError>> {
         Box::pin(async move {
@@ -182,15 +183,19 @@ where
 }
 
 pub trait [<$name Client>]<$($generics),*>: Send + Sync where ():Sized, $($where_bounds)* {
-    type Error: std::fmt::Debug;
+    type Runtime: AsyncRuntime;
     $(
     $(#[doc = $method_docs])*
-    fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send + 'static), $($arg_type)*)),*) -> impl Future<Output=Result<__add_stream_bounds!(( + Send), $($return_type)*), Self::Error>> + Send;
+    ///
+    /// Returns a future builder that allows certain options to be set before `await`-ing
+    ///
+    /// see [`ClientResponseFuture`]
+    fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send + 'static), $($arg_type)*)),*) -> ClientResponseFuture<impl Future<Output=Result<__add_stream_bounds!(( + Send), $($return_type)*), ClientError>> + Send, Self::Runtime>;
     )*
 }
 
-pub struct [<$name Client Impl>]<_Format, $($generics),*> where ():Sized, $($where_bounds)* {
-    client: Client,
+pub struct [<$name Client Impl>]<_Format, _Runtime: AsyncRuntime, $($generics),*> where ():Sized, $($where_bounds)* {
+    client: Client<_Runtime>,
     format: _Format,
     _phantom: PhantomData<fn() -> ($($generics,)*)>
 }
@@ -201,7 +206,7 @@ $(#[doc = $docs])*
 /// and sends the requests with the given [client](Client) before returning the response
 ///
 ///  The return value is always wrapped in a result: `Result<T, ClientError<_Conn::SendError>>` where `T` is the service return value
-impl<_Format, $($generics),*> [<$name Client>]<$($generics)*> for [<$name Client Impl>]<_Format, $($generics),*>
+impl<_Format, _Runtime: AsyncRuntime, $($generics),*> [<$name Client>]<$($generics)*> for [<$name Client Impl>]<_Format, _Runtime, $($generics),*>
 where
     $(_Format: WriteFormat<($(__transport_type!($($arg_type)*),)*)>,)*
     $(_Format: ReadFormat<__transport_type!($($return_type)*)>,)*
@@ -211,17 +216,31 @@ where
     $($($streamed_out: Sync,)*)*
     $($generics: Send + 'static,)*
     $($where_bounds)* {
-    type Error = ClientError;
+    type Runtime = _Runtime;
 
     $(
     $(#[doc = $method_docs])*
-    async fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send + 'static), $($arg_type)*)),*) -> Result<$($return_type)*, Self::Error> {
-        $(let $arg_name = __for_special_values!($arg_name, __outgoing_values((manager: self.client.service_manager(), format: self.format, guard: self.client.guard)), $($arg_type)*);)*
-        let request: Vec<u8> = self.format.write(($($arg_name,)*)).map_err(ClientError::Serialise)?;
-        let response = self.client.send(MethodID::_new($method_id), request).await?;
-        let value: __transport_type!($($return_type)*) = self.format.read(&response).map_err(ClientError::Deserialise)?;
-        let value = __for_special_values!(value, __incoming_values((manager: self.client.service_manager(), format: self.format, guard: self.client.guard)), $($return_type)*);
-        Ok(value)
+    fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send + 'static), $($arg_type)*)),*) -> ClientResponseFuture<impl Future<Output=Result<__add_stream_bounds!(( + Send), $($return_type)*), ClientError>> + Send, Self::Runtime> {
+        let request = {
+            let format = self.format.clone();
+            let manager = self.client.service_manager();
+            let guard = self.client.guard.clone();
+            async move {
+                $(let $arg_name = __for_special_values!($arg_name, __outgoing_values((manager: manager, format: format, guard: guard)), $($arg_type)*);)*
+                format.write(($($arg_name,)*)).map_err(ClientError::Serialise)
+            }
+        };
+        let response = {
+            let format = self.format.clone();
+            let manager = self.client.service_manager();
+            let guard = self.client.guard.clone();
+            async move |response: Vec<u8>| -> Result<_, ClientError> {
+                let value: __transport_type!($($return_type)*) = format.read(&response).map_err(ClientError::Deserialise)?;
+                let value = __for_special_values!(value, __incoming_values((manager: manager, format: format, guard: guard)), $($return_type)*);
+                Ok(value)
+            }
+        };
+        self.client.send(request, MethodID::_new($method_id), response)
     }
     )*
 }

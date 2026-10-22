@@ -14,6 +14,7 @@ use tokio::sync::{RwLock, oneshot};
 use tokio::time::{sleep, timeout};
 use tracing::log::Level;
 use tracing::{Instrument, debug, info, info_span};
+use trait_rpc::connection::ConnectionOptions;
 use trait_rpc::format::json::Json;
 use trait_rpc::websocket::axum::{WebsocketError, handle_websocket};
 use trait_rpc::websocket::tokio::new_websocket_transport;
@@ -76,7 +77,7 @@ async fn run_server(
 }
 
 async fn handle(server: ServiceImpl, websocket: WebSocketUpgrade) -> impl IntoResponse {
-    let result = handle_websocket::<Service, _>(websocket, server, &Json);
+    let result = handle_websocket::<Service, _>(websocket, server, &Json, ConnectionOptions::default());
     match result {
         Ok(response) => response,
         Err(
@@ -103,7 +104,7 @@ async fn websocket_test() {
     info!("Server running");
     sleep(Duration::from_secs(1)).await;
     let client = {
-        let client = new_websocket_transport("ws://localhost:9865/", Json, || {})
+        let client = new_websocket_transport("ws://localhost:9865/", Json, || {}, ConnectionOptions::default())
             .await
             .expect("failed to create client");
         Service::client(client, Json)

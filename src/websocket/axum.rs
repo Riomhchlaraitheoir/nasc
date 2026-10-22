@@ -1,20 +1,17 @@
 //! Integration with axum web server, see [`handle_websocket`]
 
-use crate::{IntoHandler, PROTOCOL_NAME};
 use crate::PROTOCOL_VERSION;
+use crate::{IntoHandler, PROTOCOL_NAME};
 #[allow(unused_imports, reason = "only used if certain features are enabled")]
 use crate::format;
 use crate::format::FormatSet;
-use async_executor::Executor;
 use axum::extract::ws::WebSocket;
+use axum::http::header::ToStrError;
 use axum::response::Response;
 use futures::{Sink, SinkExt};
 use std::fmt::Debug;
 use std::ops::ControlFlow;
-use std::sync::Arc;
-use axum::http::header::ToStrError;
 use thiserror::Error;
-use tokio::spawn;
 #[allow(
     unused_imports,
     reason = "may be unused depending on features, not worth splitting behind toggles"
@@ -22,7 +19,8 @@ use tokio::spawn;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::connection::sink_stream::SinkStreamConn;
-use crate::connection::{Connection, new_server_conn};
+use crate::connection::{Connection, ConnectionOptions, new_server_conn};
+use crate::runtime::TokioRuntime;
 use {
     axum::extract::{WebSocketUpgrade, ws::Message as WsMessage},
     futures::StreamExt,
@@ -38,8 +36,9 @@ use {
 /// May fail to handle the connection
 pub fn handle_websocket<R, F>(
     ws: WebSocketUpgrade,
-    server: impl IntoHandler<R, F::Format> + Send,
+    server: impl IntoHandler<R, TokioRuntime, F::Format> + Send,
     formats: &F,
+    options: ConnectionOptions,
 ) -> Result<Response, WebsocketError>
 where
     F: FormatSet + Sync,
@@ -81,20 +80,9 @@ where
 
         let conn = SinkStreamConn::new_combined(websocket);
 
-        let executor = Arc::new(Executor::new());
-
-        for _ in 0..4 {
-            let executor = executor.clone();
-            spawn(async move {
-                loop {
-                    executor.tick().await;
-                }
-            });
-        }
-
         async {
-            let driver = new_server_conn(handler).await;
-            if let Err(error) = conn.run(driver, executor).await {
+            let driver = new_server_conn(handler, options, TokioRuntime).await;
+            if let Err(error) = conn.run(driver).await {
                 error!("Websocket connection error: {error}");
             }
         }

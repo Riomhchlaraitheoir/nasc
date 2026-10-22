@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
 use tracing::warn;
+use trait_rpc::connection::ConnectionOptions;
 use trait_rpc::format::cbor::Cbor;
 use trait_rpc::format::json::Json;
 use trait_rpc::websocket::axum::{handle_websocket, WebsocketError};
@@ -38,7 +39,7 @@ async fn main() {
 
 async fn handle<R: Debug + Resource + Serialize + DeserializeOwned>(conn: WebSocketUpgrade, server: ResourceServer<R>) -> impl IntoResponse {
     let result =
-        handle_websocket::<Resources<R>, _>(conn, server, &(Json, Cbor));
+        handle_websocket::<Resources<R>, _>(conn, server, &(Json, Cbor), ConnectionOptions::default());
     match result {
         Ok(response) => response,
         Err(

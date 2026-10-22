@@ -35,7 +35,7 @@ pub struct RequestID(u32);
 ///
 /// For binary serialisation see [`length`](Self::length), [`serialise`](Self::serialise),
 /// [`serialise_into`](Self::serialise_into) and [`deserialise`](Self::deserialise)
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub enum Message {
     /// Represents a request to a service/method
@@ -81,7 +81,7 @@ pub enum Message {
 }
 
 /// A Stream-related message for a particular stream
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub enum StreamMessage {
     /// Poll the stream
@@ -93,7 +93,7 @@ pub enum StreamMessage {
 }
 
 /// Indicates that the transport was successful, but the response indicated some problem
-#[derive(Debug, Eq, PartialEq, Error, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Error)]
 #[non_exhaustive]
 #[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub enum HandleError {
@@ -106,6 +106,9 @@ pub enum HandleError {
     /// Request was improperly formatted
     #[error("Request was rejected: {0}")]
     BadPayloadFormat(String),
+    /// Request timed out
+    #[error("Request timed out")]
+    Timeout,
     /// Internal Server Error
     #[error("Internal Server Error: {0}")]
     InternalError(String),
@@ -116,7 +119,7 @@ pub enum HandleError {
 }
 
 /// An error on a connection which is not related to any particular request
-#[derive(Error, Debug, Eq, PartialEq)]
+#[derive(Error, Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 #[non_exhaustive]
 pub enum ConnectionError {
@@ -150,6 +153,7 @@ enum MessageTagRaw {
     HandleErrorServiceNotFound = 128,
     HandleErrorMethodNotFound,
     HandleErrorBadPayloadFormat,
+    HandleErrorTimeout,
     HandleErrorInternalError,
 
     ConnectionErrorMessageMalformed = 192,
@@ -179,6 +183,7 @@ enum HandleErrorTag {
     MethodNotFound,
     BadPayloadFormat,
     InternalError,
+    Timeout,
     Unknown(u8),
 }
 
@@ -214,6 +219,9 @@ impl From<Result<MessageTagRaw, TryFromReprError<u8>>> for MessageTag {
             Ok(MessageTagRaw::HandleErrorInternalError) => {
                 Self::HandleError(HandleErrorTag::InternalError)
             }
+            Ok(MessageTagRaw::HandleErrorTimeout) => {
+                Self::HandleError(HandleErrorTag::Timeout)
+            }
             Err(tag @ 128..192) => Self::HandleError(HandleErrorTag::Unknown(tag)),
 
             Ok(MessageTagRaw::ConnectionErrorMessageMalformed) => {
@@ -246,6 +254,9 @@ impl From<MessageTag> for MessageTagRaw {
             }
             MessageTag::HandleError(HandleErrorTag::InternalError) => {
                 Self::HandleErrorInternalError
+            }
+            MessageTag::HandleError(HandleErrorTag::Timeout) => {
+                Self::HandleErrorTimeout
             }
             MessageTag::ConnectionError(ConnectionErrorTag::MessageMalformed) => {
                 Self::ConnectionErrorMessageMalformed
@@ -369,6 +380,7 @@ impl Message {
                     HandleError::UnknownErrorType(_, _) => {
                         panic!("UnknownErrorType should never be written to connection")
                     }
+                    HandleError::Timeout => (HandleErrorTag::Timeout, "")
                 };
                 buf.write_tag(MessageTag::HandleError(tag));
                 buf.write_u32(request_id.0);
@@ -466,6 +478,7 @@ impl Message {
                         HandleError::BadPayloadFormat(message.to_owned())
                     }
                     HandleErrorTag::InternalError => HandleError::InternalError(message.to_owned()),
+                    HandleErrorTag::Timeout => HandleError::Timeout,
                     HandleErrorTag::Unknown(tag) => HandleError::UnknownErrorType(tag, message.to_owned()),
                 };
                 Self::Response {
@@ -598,6 +611,9 @@ impl HandleError {
             }
             Self::InternalError(message) => {
                 (HandleErrorTag::InternalError, message.as_str())
+            }
+            Self::Timeout => {
+                (HandleErrorTag::Timeout, "")
             }
             Self::UnknownErrorType(_, _) => {
                 panic!("UnknownErrorType should never be written to connection")

@@ -11,22 +11,24 @@ use crate::connection::client::{Client, ClientStream, ClientStreamState};
 use crate::connection::message::{
     ConnectionError, HandleError, Message, RequestID, ServiceID, StreamID, StreamMessage,
 };
-use crate::spawner::Spawner;
-use async_channel::{Receiver, Sender, bounded, unbounded};
+use crate::runtime::AsyncRuntime;
+use async_channel::{Receiver, Sender, bounded};
 use async_lock::Mutex;
+use bon::Builder;
 use derive_more::Display;
 use futures::channel::oneshot;
-use futures::future::{AbortHandle, Abortable, Either, FusedFuture};
+use futures::future::{AbortHandle, Abortable, FusedFuture};
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use log::warn;
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
-use std::pin::{Pin, pin};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::task::{Context, Poll};
-use tracing::debug;
+use std::time::Duration;
+use tracing::{debug, error};
 use whirlwind::ShardMap;
 
 /// Identifies a certain request
@@ -70,29 +72,36 @@ impl<T: From<u32>> Series<T> {
 /// Represents the underlying connection
 pub trait Connection {
     /// Run the connection, handling incoming and outgoing messages
-    fn run(
+    fn run<R: AsyncRuntime>(
         self,
-        driver: ConnectionDriver,
-        spawner: impl Spawner + 'static,
+        driver: ConnectionDriver<R>,
     ) -> impl Future<Output = Result<(), impl Display>> + 'static;
+}
+
+/// Options for a connection
+#[derive(Debug, Clone, Default, Builder)]
+pub struct ConnectionOptions {
+    /// The default timeout for any requests made by a client on the local peer 
+    default_client_timeout: Option<Duration>,
 }
 
 /// A signal that the connection is closed and the manager should drop
 pub struct ConnectionClosed;
 
-struct ConnectionManager {
+struct ConnectionManager<R: AsyncRuntime> {
     response_waiters: ShardMap<RequestID, ResponseWaiter>,
     incoming_streams: ShardMap<StreamID, Sender<Vec<u8>>>,
     service_ids: Series<ServiceID>,
     stream_ids: Series<StreamID>,
     request_ids: Series<RequestID>,
-    handlers: ShardMap<ServiceID, (Arc<dyn Handler + Send + Sync>, TeardownGuard)>,
+    handlers: ShardMap<ServiceID, (Arc<dyn Handler<R> + Send + Sync>, TeardownGuard)>,
     streams: ShardMap<StreamID, ServerStream>,
     message_sender: Sender<Message>,
-    priority_message_sender: Sender<Message>,
     pending_streams: ShardMap<StreamID, AbortHandle>,
     pending_handles: ShardMap<RequestID, AbortHandle>,
     is_server: bool,
+    options: ConnectionOptions,
+    runtime: R
 }
 
 type ServerStream = (Arc<Mutex<BoxStream<'static, Vec<u8>>>>, TeardownGuard);
@@ -105,20 +114,21 @@ type ResponseWaiter = oneshot::Sender<Result<Vec<u8>, HandleError>>;
     clippy::unused_async,
     reason = "Allow for future async and maintain symmetry with new_server_conn"
 )]
-pub async fn new_client_conn() -> (Client, ConnectionDriver) {
-    let (driver, teardown_guard) = new_driver(true);
+pub async fn new_client_conn<R: AsyncRuntime>(options: ConnectionOptions, runtime: R) -> (Client<R>, ConnectionDriver<R>) {
+    let (driver, teardown_guard) = new_driver(options, true, runtime);
     let client = Client {
         manager: driver.manager.clone(),
         service_id: 0.into(),
         guard: teardown_guard,
+        default_timeout: driver.manager.options.default_client_timeout
     };
     (client, driver)
 }
 
 /// Creates a new Server for the RPC connection from the given handler,
 /// also returns a [`ConnectionDriver`] to run the event loop
-pub async fn new_server_conn(handler: impl Handler + 'static) -> ConnectionDriver {
-    let (driver, teardown_guard) = new_driver(true);
+pub async fn new_server_conn<R: AsyncRuntime>(handler: impl Handler<R> + 'static, options: ConnectionOptions, runtime: R) -> ConnectionDriver<R> {
+    let (driver, teardown_guard) = new_driver(options, true, runtime);
     driver
         .manager
         .handlers
@@ -127,9 +137,8 @@ pub async fn new_server_conn(handler: impl Handler + 'static) -> ConnectionDrive
     driver
 }
 
-fn new_driver(is_server: bool) -> (ConnectionDriver, TeardownGuard) {
+fn new_driver<R: AsyncRuntime>(options: ConnectionOptions, is_server: bool, runtime: R) -> (ConnectionDriver<R>, TeardownGuard) {
     let (message_sender, message_receiver) = bounded(32);
-    let (priority_message_sender, priority_message_receiver) = unbounded();
     let (teardown_guard, teardown_signal) = new_teardown();
     let manager = Arc::new(ConnectionManager {
         response_waiters: ShardMap::new(),
@@ -140,21 +149,21 @@ fn new_driver(is_server: bool) -> (ConnectionDriver, TeardownGuard) {
         handlers: ShardMap::new(),
         streams: ShardMap::new(),
         message_sender,
-        priority_message_sender,
         pending_streams: ShardMap::new(),
         pending_handles: ShardMap::new(),
         is_server,
+        options,
+        runtime,
     });
     let driver = ConnectionDriver {
         manager: Arc::clone(&manager),
         message_receiver,
-        priority_message_receiver,
         teardown_signal: Mutex::new(teardown_signal),
     };
     (driver, teardown_guard)
 }
 
-impl ConnectionManager {
+impl<R: AsyncRuntime> ConnectionManager<R> {
     async fn send_message(&self, message: Message) {
         if self.message_sender.send(message).await.is_err() {
             warn!("Connection closed");
@@ -164,7 +173,6 @@ impl ConnectionManager {
     async fn handle_message(
         self: &Arc<Self>,
         message: Message,
-        executor: &impl Spawner,
     ) -> Result<(), ConnectionError> {
         debug!("Received message: {:?}", message);
         match message {
@@ -200,7 +208,7 @@ impl ConnectionManager {
                     };
                     let (abort_handle, abort_registration) = AbortHandle::new_pair();
                     self.pending_handles.insert(request_id, abort_handle).await;
-                    executor.spawn(Abortable::new(task, abort_registration));
+                    self.runtime.spawn(Abortable::new(task, abort_registration).map(drop));
                 } else {
                     warn!("Service {service_id} not found");
                     self.send_message(Message::Response {
@@ -233,7 +241,7 @@ impl ConnectionManager {
             }
             Message::ConnectionError(error) => return Err(error),
             Message::Stream { stream_id, message } => {
-                self.handle_stream_message(stream_id, message, executor)
+                self.handle_stream_message(stream_id, message)
                     .await;
             }
         }
@@ -244,7 +252,6 @@ impl ConnectionManager {
         self: &Arc<Self>,
         stream_id: StreamID,
         message: StreamMessage,
-        executor: &impl Spawner,
     ) {
         match message {
             StreamMessage::Poll => {
@@ -268,7 +275,7 @@ impl ConnectionManager {
                     };
                     let (abort_handle, abort_registration) = AbortHandle::new_pair();
                     self.pending_streams.insert(stream_id, abort_handle).await;
-                    executor.spawn(Abortable::new(task, abort_registration));
+                    self.runtime.spawn(Abortable::new(task, abort_registration).map(drop));
                 } else {
                     warn!("Stream {stream_id} not found, sending Done");
                     if let Err(error) = self
@@ -312,16 +319,25 @@ impl ConnectionManager {
             }
         }
     }
+
+    fn spawn_send(&self, message: Message) {
+        let sender = self.message_sender.clone();
+        self.runtime.spawn(async move {
+            if let Err(error) = sender.send(message.clone()).await {
+                error!("Failed to send message ({message:?}): {error}");
+            }
+        });
+    }
 }
 
 /// Allows creation of new services/streams
-pub struct ServiceManager(Arc<ConnectionManager>);
+pub struct ServiceManager<R: AsyncRuntime>(Arc<ConnectionManager<R>>);
 
-impl ServiceManager {
+impl<R: AsyncRuntime> ServiceManager<R> {
     /// Create a new outgoing service
     pub async fn outgoing_service(
         &self,
-        handler: impl Handler + 'static,
+        handler: impl Handler<R> + 'static,
         guard: TeardownGuard,
     ) -> ServiceID {
         let service_id = self.0.service_ids.next();
@@ -338,12 +354,13 @@ impl ServiceManager {
         clippy::unused_async,
         reason = "Keep this async for forward compatability and consistency with other similar methods"
     )]
-    pub async fn incoming_service(&self, service_id: ServiceID, guard: TeardownGuard) -> Client {
+    pub async fn incoming_service(&self, service_id: ServiceID, guard: TeardownGuard) -> Client<R> {
         debug!("Received incoming service {service_id}");
         Client {
             manager: Arc::clone(&self.0),
             service_id,
             guard,
+            default_timeout: self.0.options.default_client_timeout
         }
     }
 
@@ -367,7 +384,7 @@ impl ServiceManager {
         &self,
         stream_id: StreamID,
         guard: TeardownGuard,
-    ) -> impl Stream<Item = Vec<u8>> + Send + 'static + use<> {
+    ) -> impl Stream<Item = Vec<u8>> + Send + 'static + use<R> {
         debug!("Received incoming stream {stream_id}");
         let (sender, receiver) = bounded(10);
         self.0.incoming_streams.insert(stream_id, sender).await;
@@ -386,31 +403,28 @@ impl ServiceManager {
 /// Manages both waiting for requests/responses and sending requests/responses
 ///
 /// Automatically terminates when the last client/handler is dropped
-pub struct ConnectionDriver {
+pub struct ConnectionDriver<R: AsyncRuntime> {
     // TODO: make fields pub and allow Connection impl to drive loop
-    manager: Arc<ConnectionManager>,
+    manager: Arc<ConnectionManager<R>>,
     message_receiver: Receiver<Message>,
-    priority_message_receiver: Receiver<Message>,
     teardown_signal: Mutex<TeardownSignal>,
 }
 
-impl ConnectionDriver {
+impl<R: AsyncRuntime> ConnectionDriver<R> {
     /// Consume the incoming message and handle it appropriately, this function will spawn a new
     /// task if it does anything that might take some time (calling handler methods, polling streams)
     pub async fn consume_incoming_message(
         &self,
         message: Message,
-        executor: &impl Spawner,
     ) -> Result<(), ConnectionError> {
-        self.manager.handle_message(message, executor).await
+        self.manager.handle_message(message).await
     }
 
     /// Get all remaining message that are waiting to be sent, should be used after teardown signal
     /// to ensure remote peer receives all outstanding notices of dropped streams/services to ensure
     /// it can close safely too
     pub fn flush_outgoing_messages(&self) -> impl Iterator<Item = Message> {
-        std::iter::from_fn(|| self.priority_message_receiver.try_recv().ok())
-            .chain(std::iter::from_fn(|| self.message_receiver.try_recv().ok()))
+        std::iter::from_fn(|| self.message_receiver.try_recv().ok())
     }
 
     /// Returns the next outgoing message, may take some time to actually return if no message is
@@ -419,11 +433,7 @@ impl ConnectionDriver {
     /// Returns None if there are no more messages to send, this is not expected to happen prior
     /// to the teardown signal
     pub async fn next_outgoing_message(&self) -> Option<Message> {
-        let next_priority = pin!(self.priority_message_receiver.recv());
-        let next = pin!(self.message_receiver.recv());
-        let (Either::Left((result, _)) | Either::Right((result, _))) =
-            futures::future::select(next_priority, next).await;
-        result.ok()
+        self.message_receiver.recv().await.ok()
     }
 
     /// This future returns when all clients/handlers have been dropped, this signals that the

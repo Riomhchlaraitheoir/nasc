@@ -3,10 +3,10 @@
 use crate::__macros::imports::Sink;
 use crate::connection::client::Client;
 use crate::connection::sink_stream::SinkStreamConn;
-use crate::connection::{Connection, new_client_conn};
+use crate::connection::{new_client_conn, Connection, ConnectionOptions};
 use crate::format::IsFormat;
 use crate::{PROTOCOL_VERSION, PROTOCOL_NAME};
-use crate::spawner::BrowserSpawner;
+use crate::runtime::BrowserRuntime;
 use futures::channel::oneshot;
 use futures::{SinkExt, StreamExt};
 use gloo_net::websocket::futures::WebSocket;
@@ -31,7 +31,8 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + 'stat
     url: impl AsRef<str>,
     format: Format,
     on_close: OnClose,
-) -> Result<Client, WebsocketError> {
+    options: ConnectionOptions
+) -> Result<Client<BrowserRuntime>, WebsocketError> {
     debug!("Connecting websocket to {}", url.as_ref());
     let protocol = format!("{PROTOCOL_NAME}.{PROTOCOL_VERSION}.{}", format.subprotocol());
     let websocket = WebSocket::open_with_protocol(url.as_ref(), &protocol)
@@ -57,11 +58,11 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + 'stat
 
     let client_ready = oneshot::channel();
     spawn_local(async {
-        let (client, driver) = new_client_conn().await;
+        let (client, driver) = new_client_conn(options, BrowserRuntime).await;
         let Ok(()) = client_ready.0.send(client) else {
             return
         };
-        if let Err(error) = conn.run(driver, BrowserSpawner).await {
+        if let Err(error) = conn.run(driver).await {
             error!("connection error: {}", error);
         }
         on_close();
