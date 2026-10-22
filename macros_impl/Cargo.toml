@@ -7,11 +7,11 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-proc-macro2 = "1.0.103"
-syn = { version = "2.0.111", features = ["parsing", "full", "extra-traits"] }
-quote = "1.0.42"
-convert_case = "0.10.0"
+proc-macro2 = "1.0.107"
+syn = { version = "3.0.9", features = ["parsing", "full", "extra-traits"] }
+quote = "1.0.47"
+convert_case = "0.12.0"
 
 [dev-dependencies]
-prettyplease = "0.2.37"
+prettyplease = "0.3.0"
 difference = "2.0.0"

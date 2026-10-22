@@ -11,5 +11,5 @@ proc-macro = true
 
 [dependencies]
 macros-impl = { package = "trait-rpc-macros-impl", path = "../macros_impl" }
-syn = "2.0.111"
-quote = "1.0.42"
+syn = "3.0.9"
+quote = "1.0.47"

@@ -4,7 +4,7 @@ use quote::ToTokens;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::token::Colon;
-use syn::{Attribute, Expr, FnArg, GenericArgument, GenericParam, ItemTrait, LitStr, Meta, MetaNameValue, Pat, PatIdent, Path, PathArguments, PathSegment, PredicateType, ReturnType, Token, TraitItem, TraitItemFn, Type, TypeParamBound, WherePredicate, parse_quote};
+use syn::{parse_quote, Attribute, Expr, FnArg, GenericArgument, GenericParam, ItemTrait, LitStr, Meta, MetaNameValue, Pat, PatIdent, Path, PathArguments, PathSegment, PredicateType, ReturnType, Safety, Token, TraitItem, TraitItemFn, Type, TypeParamBound, WherePredicate};
 
 impl Parse for Args {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -72,14 +72,15 @@ pub fn parse_rpc(input: ItemTrait, args: Args) -> syn::Result<Rpc> {
             ));
         };
         let ident = ty.ident;
-        if ty.default.is_some() {
+        if let Some((_eq, default)) = ty.default {
             return Err(syn::Error::new(
-                ty.default.span(),
+                default.span(),
                 "Default is not supported",
             ));
         }
         if !ty.bounds.is_empty() {
             generic_bounds.push(WherePredicate::Type(PredicateType {
+                attrs: vec![],
                 lifetimes: None,
                 bounded_ty: parse_quote!(#ident),
                 colon_token: Colon::default(),
@@ -109,9 +110,9 @@ fn method(item: TraitItemFn) -> syn::Result<Method> {
     if let Some(con) = item.sig.constness {
         return Err(syn::Error::new_spanned(con, "const fn is not supported"));
     }
-    if let Some(unsafety) = item.sig.unsafety {
-        return Err(syn::Error::new_spanned(
-            unsafety,
+    if let Safety::Unsafe(unsafety) = item.sig.safety {
+        return Err(syn::Error::new(
+            unsafety.span(),
             "unsafe fn is not supported",
         ));
     }
