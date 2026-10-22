@@ -63,8 +63,7 @@ pub fn parse_rpc(input: ItemTrait, args: Args) -> syn::Result<Rpc> {
     let mut generic_bounds: Vec<_> = input
         .generics
         .where_clause
-        .map(|w| w.predicates.into_iter().collect())
-        .unwrap_or_default();
+        .map_or_default(|w| w.predicates.into_iter().collect());
     for generic in input.generics.params {
         let GenericParam::Type(ty) = generic else {
             return Err(syn::Error::new(
@@ -84,7 +83,7 @@ pub fn parse_rpc(input: ItemTrait, args: Args) -> syn::Result<Rpc> {
                 lifetimes: None,
                 bounded_ty: parse_quote!(#ident),
                 colon_token: Colon::default(),
-                bounds: ty.bounds.clone(),
+                bounds: ty.bounds,
             }));
         }
         generic_types.push(ident);

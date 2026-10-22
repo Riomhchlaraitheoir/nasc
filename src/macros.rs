@@ -331,10 +331,10 @@ macro_rules! __for_special_values {
         }
     };
     ($value:ident, $macro_name:ident($args:tt), impl $($(::)?futures::stream::)?Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
-        $crate::$macro_name!(stream<$item>: $value, $args);
+        $crate::$macro_name!(stream<$item>: $value, $args)
     };
     ($value:ident, $macro_name:ident($args:tt), impl Rpc<$rpc:ty>) => {
-        $crate::$macro_name!(rpc<$rpc>: $value, $args);
+        $crate::$macro_name!(rpc<$rpc>: $value, $args)
     };
     ($value:ident, $macro_name:ident($args:tt), impl $($unexpected:tt)*) => {
         compile_error!(concat!("unexpected impl argument: impl ", stringify!($($unexpected)*)));
