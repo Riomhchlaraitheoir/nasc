@@ -49,6 +49,11 @@ pub enum Message {
         /// The method arguments
         payload: Vec<u8>,
     },
+    /// Cancel a particular request if possible, the response may still be sent due to race conditions
+    CancelRequest {
+        /// The request to cancel
+        request_id: RequestID,
+    },
     /// Represents a response from a method
     Response {
         /// The request ID, corresponds to `request_id` in [`Request`](Self::Request)
@@ -134,6 +139,7 @@ pub enum ConnectionError {
 #[repr(u8)]
 enum MessageTagRaw {
     Request = 0,
+    CancelRequest,
     Response,
     ServiceDropped,
     StreamPoll,
@@ -152,6 +158,7 @@ enum MessageTagRaw {
 
 enum MessageTag {
     Request,
+    CancelRequest,
     Response,
     ServiceDropped,
     Stream(StreamMessageTag),
@@ -186,6 +193,7 @@ impl From<Result<MessageTagRaw, TryFromReprError<u8>>> for MessageTag {
         let result = result.map_err(|e| e.input);
         match result {
             Ok(MessageTagRaw::Request) => Self::Request,
+            Ok(MessageTagRaw::CancelRequest) => Self::CancelRequest,
             Ok(MessageTagRaw::Response) => Self::Response,
             Ok(MessageTagRaw::ServiceDropped) => Self::ServiceDropped,
             Ok(MessageTagRaw::StreamPoll) => Self::Stream(StreamMessageTag::Poll),
@@ -224,6 +232,7 @@ impl From<MessageTag> for MessageTagRaw {
     fn from(tag: MessageTag) -> Self {
         match tag {
             MessageTag::Request => Self::Request,
+            MessageTag::CancelRequest => Self::CancelRequest,
             MessageTag::Response => Self::Response,
             MessageTag::ServiceDropped => Self::ServiceDropped,
             MessageTag::HandleError(HandleErrorTag::ServiceNotFound) => {
@@ -275,6 +284,7 @@ impl Message {
                         + size_of::<u32>()
                         + payload.len()
                 }
+                Self::CancelRequest { request_id: _ } => size_of::<RequestID>(),
                 Self::Response {
                     request_id: _,
                     result,
@@ -324,6 +334,12 @@ impl Message {
                 buf.write_u32(request_id.0);
                 buf.write_u32(method_id.0);
                 buf.write_bytes(payload);
+            }
+            Self::CancelRequest {
+                request_id,
+            } => {
+                buf.write_tag(MessageTag::CancelRequest);
+                buf.write_u32(request_id.0);
             }
             Self::Response {
                 request_id,
@@ -424,6 +440,11 @@ impl Message {
                     method_id,
                     payload,
                 }
+            }
+            MessageTag::CancelRequest => {
+                buf.check_bounds(size_of::<RequestID>())?;
+                let request_id: RequestID = buf.read_u32().into();
+                Self::CancelRequest { request_id }
             }
             MessageTag::Response => {
                 buf.check_bounds(size_of::<RequestID>() + size_of::<u32>())?;

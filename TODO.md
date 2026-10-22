@@ -7,5 +7,4 @@
   - `client.my_method().await`
   - `client.my_method().timeout(10s).await`
   - `client.my_method().no_timeout().await`
-  - Perhaps add general cancel message when client future drops?
 - client-side streams can timeout using `futures_time::StreamExt::timeout` (document or add direct support?)
