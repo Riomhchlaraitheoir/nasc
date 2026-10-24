@@ -11,7 +11,6 @@ pub mod imports {
         },
         runtime::AsyncRuntime,
         format::{IsFormat, Format, ReadFormat, WriteFormat},
-        panic_handler::PanicStrategy,
         __add_stream_bounds, method_id, __transport_type, __for_special_values,
     };
     pub use ::{
@@ -147,9 +146,11 @@ pub struct [<$name Handler>]<_Server, _Format $(,$generics)*>{
     _phantom: PhantomData<fn() -> ($($generics,)*)>
 }
 
-impl<_Runtime: AsyncRuntime, _Server: [<$name Server>]<$($generics,)*>, _Format, $($generics,)*> Handler<_Runtime> for [<$name Handler>]<_Server, _Format, $($generics),*>
+impl<_Runtime, _Server, _Format, $($generics,)*> Handler<_Runtime> for [<$name Handler>]<_Server, _Format, $($generics),*>
 where
     ():Sized,
+    _Runtime: AsyncRuntime,
+    _Server: [<$name Server>]<$($generics,)*>,
     $(_Format: ReadFormat<($(__transport_type!($($arg_type)*),)*)>,)*
     $(_Format: WriteFormat<__transport_type!($($return_type)*)>,)*
     $($(_Format: ReadFormat<$streamed_in>,)*)*
@@ -159,15 +160,14 @@ where
     $($generics: Send + 'static,)*
     $($where_bounds)*
 {
-    fn handle(
+    async fn handle(
         &self,
         request_id: RequestID,
         method_id: MethodID,
         request: Vec<u8>,
         manager: ServiceManager<_Runtime>,
         guard: TeardownGuard
-    ) -> BoxFuture<Result<Vec<u8>, HandleError>> {
-        Box::pin(async move {
+    ) -> Result<Vec<u8>, HandleError> {
         match method_id.value() {
             $(
             $method_id => {
@@ -184,7 +184,6 @@ where
             )*
             _ => return Err(HandleError::MethodNotFound),
         }
-        })
     }
 }
 

@@ -1,3 +1,2 @@
-- Catch panics in handlers and streams
 - Add support for AsyncRead/AsyncWrite
-- client-side streams can timeout using `futures_time::StreamExt::timeout` (document or add direct support?)
+- Document how to handler client stream timeouts

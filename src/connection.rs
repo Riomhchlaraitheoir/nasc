@@ -4,6 +4,7 @@ pub mod channel;
 pub mod client;
 pub mod message;
 pub mod sink_stream;
+mod handler;
 
 use crate::Handler;
 use crate::__macros::imports::Stream;
@@ -22,6 +23,7 @@ use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use log::warn;
 use std::fmt::{Debug, Display};
+use std::future::ready;
 use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -31,6 +33,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tracing::{debug, error};
 use whirlwind::ShardMap;
+use crate::connection::handler::{RawHandler, RegisteredHandler};
 
 /// Identifies a certain request
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, Display, Ord, PartialOrd)]
@@ -95,7 +98,7 @@ struct ConnectionManager<R: AsyncRuntime> {
     service_ids: Series<ServiceID>,
     stream_ids: Series<StreamID>,
     request_ids: Series<RequestID>,
-    handlers: ShardMap<ServiceID, (Arc<dyn Handler<R> + Send + Sync>, TeardownGuard)>,
+    handlers: ShardMap<ServiceID, Arc<dyn RawHandler<R>>>,
     streams: ShardMap<StreamID, ServerStream>,
     message_sender: Sender<Message>,
     pending_streams: ShardMap<StreamID, AbortHandle>,
@@ -133,7 +136,7 @@ pub async fn new_server_conn<R: AsyncRuntime>(handler: impl Handler<R> + 'static
     driver
         .manager
         .handlers
-        .insert(0.into(), (Arc::new(handler), teardown_guard))
+        .insert(0.into(), Arc::new(RegisteredHandler::new(handler, teardown_guard)))
         .await;
     driver
 }
@@ -183,9 +186,8 @@ impl<R: AsyncRuntime> ConnectionManager<R> {
                 method_id,
                 payload,
             } => {
-                if let Some((handler, guard)) =
-                    self.handlers.get(&service_id).await.map(|h| h.clone())
-                {
+                if let Some(handler) =
+                    self.handlers.get(&service_id).await.map(|h| h.clone()) {
                     let message_sender = self.message_sender.clone();
                     let manager = Arc::clone(self);
                     let pending_handles = self.pending_handles.clone();
@@ -196,7 +198,6 @@ impl<R: AsyncRuntime> ConnectionManager<R> {
                                 method_id,
                                 payload,
                                 ServiceManager(manager),
-                                guard,
                             )
                             .await;
                         if let Err(error) = message_sender
@@ -345,7 +346,7 @@ impl<R: AsyncRuntime> ServiceManager<R> {
         debug!("Outgoing service {service_id}");
         self.0
             .handlers
-            .insert(service_id, (Arc::new(handler), guard))
+            .insert(service_id, Arc::new(RegisteredHandler::new(handler, guard)))
             .await;
         service_id
     }
@@ -372,6 +373,7 @@ impl<R: AsyncRuntime> ServiceManager<R> {
         guard: TeardownGuard,
     ) -> StreamID {
         let stream_id = self.0.stream_ids.next();
+        let stream = AssertUnwindSafe(stream).catch_unwind().scan((), |(), result| ready(result.ok()));
         debug!("Outgoing stream {stream_id}");
         self.0
             .streams

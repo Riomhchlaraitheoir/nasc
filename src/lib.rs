@@ -3,7 +3,6 @@
 #![deny(clippy::disallowed_types)]
 
 use futures::Sink;
-use futures::future::BoxFuture;
 
 #[path = "macros.rs"]
 #[doc(hidden)]
@@ -11,7 +10,6 @@ pub mod __macros;
 pub mod connection;
 mod ext;
 pub mod format;
-pub mod panic_handler;
 
 #[doc = include_str!("../docs/rpc.md")]
 #[doc(inline)]
@@ -69,7 +67,7 @@ pub trait Handler<R: AsyncRuntime>: Send + Sync + 'static {
         request: Vec<u8>,
         stream_handler: ServiceManager<R>,
         guard: TeardownGuard,
-    ) -> BoxFuture<'_, Result<Vec<u8>, HandleError>>;
+    ) -> impl Future<Output = Result<Vec<u8>, HandleError>> + Send + '_;
 }
 
 /// Represents a server implementation that can easily be converted into a [`Handler`]
