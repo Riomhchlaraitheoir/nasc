@@ -1,9 +1,10 @@
 //! Defines the [`AsyncRuntime`] trait which defines how to spawn a task for your chosen async executor
 
+use std::panic::RefUnwindSafe;
 use std::time::Duration;
 
 /// Defines an async executor capable of spawning futures
-pub trait AsyncRuntime: Clone + Send + Sync + 'static {
+pub trait AsyncRuntime: Clone + Send + Sync + RefUnwindSafe + 'static {
     /// A future that sleeps for a predefined duration
     type SleepFuture: Future<Output = ()> + Unpin + Send + 'static;
 
@@ -14,9 +15,9 @@ pub trait AsyncRuntime: Clone + Send + Sync + 'static {
     fn sleep(&self, duration: Duration) -> Self::SleepFuture;
 }
 
-/// Spawner implementation for tokio
 #[cfg(feature = "tokio")]
 #[derive(Debug, Clone)]
+/// Runtime for use with tokio, spawns tasks using [`tokio::spawn`]
 pub struct TokioRuntime;
 
 #[cfg(feature = "tokio")]

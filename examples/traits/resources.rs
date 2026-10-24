@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use trait_rpc::rpc;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
 pub struct Book {
@@ -14,7 +15,7 @@ pub struct Author {
     pub quote: String,
 }
 
-#[macros::rpc]
+#[rpc]
 pub trait Resources<T: Debug> {
     fn subscribe() -> impl Stream<Item=T>;
     fn list() -> Vec<T>;

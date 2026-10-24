@@ -1,7 +1,7 @@
 use crate::parse::parse_rpc;
 use proc_macro2::Ident;
 use quote::ToTokens;
-use syn::{Expr, ItemTrait, LitStr, Path, Type, Visibility, WherePredicate};
+use syn::{Expr, ItemTrait, Path, Type, Visibility, WherePredicate};
 
 mod parse;
 
@@ -46,5 +46,4 @@ enum Param {
 // There are no such args for now, but we will keep this just in case tha changes
 pub struct Args {
     trait_rpc: Path,
-    serde: LitStr,
 }

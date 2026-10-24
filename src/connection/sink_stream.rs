@@ -1,5 +1,5 @@
-//! Support for using a sink/stream combo as a connection, sink/stream should operate on Vec<u8>
-//! and ensure that each Vec<u8> represents a single message
+//! Support for using a sink/stream combo as a connection, sink/stream should operate on `Vec<u8>`
+//! and ensure that each `Vec<u8>` represents a single message
 
 use std::fmt::Display;
 use std::pin::pin;

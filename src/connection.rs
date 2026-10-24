@@ -23,6 +23,7 @@ use futures::{FutureExt, StreamExt};
 use log::warn;
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -446,7 +447,7 @@ impl<R: AsyncRuntime> ConnectionDriver<R> {
 fn new_teardown() -> (TeardownGuard, TeardownSignal) {
     let (teardown_guard, teardown_signal) = oneshot::channel::<()>();
     (
-        TeardownGuard(Arc::new(teardown_guard)),
+        TeardownGuard(AssertUnwindSafe(Arc::new(teardown_guard))),
         TeardownSignal(teardown_signal),
     )
 }
@@ -456,14 +457,19 @@ fn new_teardown() -> (TeardownGuard, TeardownSignal) {
 /// When this guard and all of its clones are dropped, the `ConnectionDriver` will stop running and
 /// the underlying `ConnectionManager` will be dropped
 #[clippy::has_significant_drop]
-#[derive(Clone)]
 pub struct TeardownGuard(
     #[allow(
         unused,
         reason = "This is never used directly, instead it closes the channel when all `Arc`s have been dropped, signalling teardown"
     )]
-    Arc<oneshot::Sender<()>>,
+    AssertUnwindSafe<Arc<oneshot::Sender<()>>>,
 );
+
+impl Clone for TeardownGuard {
+    fn clone(&self) -> Self {
+        Self(AssertUnwindSafe(self.0.0.clone()))
+    }
+}
 
 struct TeardownSignal(oneshot::Receiver<()>);
 

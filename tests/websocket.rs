@@ -17,7 +17,7 @@ use tracing::{Instrument, debug, info, info_span};
 use trait_rpc::connection::ConnectionOptions;
 use trait_rpc::format::json::Json;
 use trait_rpc::websocket::axum::{WebsocketError, handle_websocket};
-use trait_rpc::websocket::tokio::new_websocket_transport;
+use trait_rpc::websocket::tokio_tungstenite::new_websocket_transport;
 
 #[rpc]
 trait Service {

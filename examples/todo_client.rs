@@ -4,7 +4,7 @@ use std::time::Duration;
 use trait_rpc::format::json::Json;
 use trait_rpc::{Rpc};
 use trait_rpc::connection::ConnectionOptions;
-use trait_rpc::websocket::tokio::new_websocket_transport;
+use trait_rpc::websocket::tokio_tungstenite::new_websocket_transport;
 
 include!("traits/todo.rs");
 

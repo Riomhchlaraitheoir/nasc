@@ -1,4 +1,4 @@
-//! Provides support for the CBOR ([JavaScript Object Notation](https://www.json.org/)) format
+//! Provides support for the JSON ([JavaScript Object Notation](https://www.json.org/)) format
 
 use crate::format::{Format, IsFormat, ReadFormat, WriteFormat};
 use serde::Serialize;

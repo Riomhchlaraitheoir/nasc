@@ -2,7 +2,7 @@
 #[doc(hidden)]
 pub mod imports {
     pub use crate::{
-        Handler, Rpc, RpcWithServer, StreamError,
+        Handler, Rpc, RpcWithServer,
         connection::{
             ServiceManager, TeardownGuard,
             client::{Client, ClientError, ClientResponseFuture},
@@ -10,8 +10,8 @@ pub mod imports {
             MethodID
         },
         runtime::AsyncRuntime,
-        format::{Format, ReadFormat, WriteFormat},
-        Request as RpcRequest,
+        format::{IsFormat, Format, ReadFormat, WriteFormat},
+        panic_handler::PanicStrategy,
         __add_stream_bounds, method_id, __transport_type, __for_special_values,
     };
     pub use ::{
@@ -21,7 +21,8 @@ pub mod imports {
             future::BoxFuture
         },
         std::marker::PhantomData,
-        tracing
+        tracing,
+        pastey::paste
     };
 }
 
@@ -40,9 +41,6 @@ macro_rules! method_id {
 #[macro_export]
 macro_rules! __generate_rpc {
     (
-        args = {
-            serde = $serde:literal,
-        },
         docs = { $($docs:expr),* },
         vis = $vis:vis,
         generics = [$($generics:ident),*],
@@ -61,7 +59,7 @@ macro_rules! __generate_rpc {
             streamed_out = [$($streamed_out:ty),*],
         })*],
     ) => {
-$crate::__paste!{
+$crate::__macros::imports::paste!{
 #[allow(unused_imports, reason = "These might not always be used, but they should be available in this module anyway")]
 $vis use [<$name Module>]::{
     [<$name>],
@@ -115,10 +113,18 @@ impl<$($generics),*> $name<$($generics),*> where ():Sized, $($generics: 'static,
 }
 
 
-impl<_Server: [<$name Server>]<$($generics),*>, $($generics),*> RpcWithServer<_Server> for $name<$($generics),*> where ():Sized,  $($generics: Send + 'static,)* $($where_bounds)* {
-    type Handler<_Format, _Runtime> = [<$name Handler>]<_Server, _Format, $($generics),*>;
+impl<_Server: [<$name Server>]<$($generics),*>, $($generics,)* _Runtime: AsyncRuntime, _Format: IsFormat> RpcWithServer<_Server, _Runtime, _Format> for $name<$($generics),*>
+where
+    ():Sized,
+    $($generics: Send + 'static,)*
+    [<$name Handler>]<_Server, _Format, $($generics),*>: Handler<_Runtime>,
+    _Runtime: AsyncRuntime,
+    _Format: IsFormat,
+    $($where_bounds)*
+{
+    type Handler = [<$name Handler>]<_Server, _Format, $($generics),*>;
 
-    fn handler<_Format, _Runtime: AsyncRuntime>(server: _Server, format: _Format) ->  Self::Handler<_Format, _Runtime> {
+    fn handler(server: _Server, format: _Format) ->  Self::Handler {
         [<$name Handler>]{server, format, _phantom: PhantomData::<fn() -> ($($generics,)*)>}
     }
 }
@@ -126,7 +132,7 @@ impl<_Server: [<$name Server>]<$($generics),*>, $($generics),*> RpcWithServer<_S
 $(#[doc = $docs])*
 ///
 /// This is the trait which is used by the server side in order to serve the client
-pub trait [<$name Server>]<$($generics),*>: Send + Sync {
+pub trait [<$name Server>]<$($generics),*>: Send + Sync + 'static {
     $(
     $(#[doc = $method_docs])*
     fn $method_name(&self, $($arg_name: __add_stream_bounds!(( + Send), $($arg_type)*)),*) -> impl Future<Output=__add_stream_bounds!(( + Send + 'static), $($return_type)*)> + Send;
@@ -250,6 +256,7 @@ where
     }
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! __outgoing_values {
     (stream<$item:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{
@@ -272,6 +279,7 @@ macro_rules! __outgoing_values {
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! __incoming_values {
     (stream<$item:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{

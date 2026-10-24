@@ -1,4 +1,4 @@
-use crate::{Args, Method, Param, Rpc};
+use crate::{Method, Param, Rpc};
 use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{Expr, ExprLit, Lit, LitInt};
@@ -6,12 +6,11 @@ use syn::{Expr, ExprLit, Lit, LitInt};
 impl ToTokens for Rpc {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let trait_rpc = &self.args.trait_rpc;
-        let args = &self.args;
         let docs = {
             let docs = &self.docs;
             quote! {{
-                    #(#docs),*
-                }}
+                #(#docs),*
+            }}
         };
         let vis = &self.vis;
         let ty_generics = &self.generic_types;
@@ -20,7 +19,6 @@ impl ToTokens for Rpc {
         let methods = &self.methods;
         tokens.extend(quote! {
             #trait_rpc::__generate_rpc!{
-                args = #args,
                 docs = #docs,
                 vis = #vis,
                 generics = [#(#ty_generics),*],
@@ -32,25 +30,14 @@ impl ToTokens for Rpc {
     }
 }
 
-impl ToTokens for Args {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let serde = &self.serde;
-        tokens.extend(quote! {{
-            serde = #serde,
-        }});
-    }
-}
-
 impl ToTokens for Method {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let id = self.id.clone().unwrap_or_else(|| {
-            generate_id(&self.name)
-        });
+        let id = self.id.clone().unwrap_or_else(|| generate_id(&self.name));
         let docs = {
             let docs = &self.docs;
             quote! {{
-                    #(#docs),*
-                }}
+                #(#docs),*
+            }}
         };
         let name = &self.name;
         let args = self.args.iter().map(|(name, param)| {
@@ -65,9 +52,10 @@ impl ToTokens for Method {
             quote!((#user))
         };
 
-        let streamed_in = self.args.iter().flat_map(|(_, param)| {
-            param.streamed_types()
-        });
+        let streamed_in = self
+            .args
+            .iter()
+            .flat_map(|(_, param)| param.streamed_types());
         let streamed_out = self.ret.streamed_types();
 
         tokens.extend(quote! {{

@@ -28,12 +28,8 @@ use {
 
 /// Handle an incoming websocket connection
 ///
-/// Handle this connection, waiting for requests and sending responses
-/// The server must implement [`ServiceBookends`](super::ServiceBookends), this trait controls
-/// if and when idle connections are killed
-///
 /// # Errors
-/// May fail to handle the connection
+/// May reject the connection
 pub fn handle_websocket<R, F>(
     ws: WebSocketUpgrade,
     server: impl IntoHandler<R, TokioRuntime, F::Format> + Send,

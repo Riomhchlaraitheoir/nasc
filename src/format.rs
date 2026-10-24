@@ -26,17 +26,17 @@ pub trait Format<Read, Write>: ReadFormat<Read> + WriteFormat<Write> + IsFormat 
 
 /// A format which is able to deserialise `Read`
 pub trait ReadFormat<Read>: Send + Sync + IsFormat {
-    /// Read a value from the given [Read]
+    /// Read a value from the given `Read`
     fn read(&self, reader: &[u8]) -> Result<Read, Box<dyn Error + Send>>;
 }
 
 /// A format which is able to serialise `Write`
 pub trait WriteFormat<Write>: Send + Sync + IsFormat {
-    /// write the given value to the given [Write]
+    /// write the given value to the given `Write`
     fn write(&self, value: Write) -> Result<Vec<u8>, Box<dyn Error + Send>>;
 }
 
-/// A format which is either A or B
+#[doc(hidden)]
 #[allow(missing_docs, reason = "Variants are self documenting")]
 #[derive(Debug, Clone, Copy)]
 pub enum EitherFormat<A, B> {
