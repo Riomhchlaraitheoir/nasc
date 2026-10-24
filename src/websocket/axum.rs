@@ -11,6 +11,7 @@ use axum::response::Response;
 use futures::{Sink, SinkExt};
 use std::fmt::Debug;
 use std::ops::ControlFlow;
+use axum::http::HeaderValue;
 use thiserror::Error;
 #[allow(
     unused_imports,
@@ -31,7 +32,7 @@ use {
 /// # Errors
 /// May reject the connection
 pub fn handle_websocket<R, F>(
-    ws: WebSocketUpgrade,
+    mut ws: WebSocketUpgrade,
     server: impl IntoHandler<R, TokioRuntime, F::Format> + Send,
     formats: &F,
     options: ConnectionOptions,
@@ -39,12 +40,10 @@ pub fn handle_websocket<R, F>(
 where
     F: FormatSet + Sync,
 {
-    let selected = ws.requested_protocols().map(|header| {
-        header.to_str()
-    }).collect::<Result<Vec<_>, _>>()?
-        .into_iter()
+    let selected = ws.requested_protocols()
+        .cloned()
         .map(|header| parse_protocol(header, formats))
-        .try_fold(None, |acc: Option<Result<F::Format, WebsocketError>>, result| {
+        .try_fold(None, |acc, result| {
             if result.is_ok() {
                 ControlFlow::Break(result)
             } else {
@@ -54,7 +53,8 @@ where
     let (ControlFlow::Break(result) | ControlFlow::Continue(Some(result))) = selected else {
         return Err(WebsocketError::UnsupportedProtocol) // no protocol requests
     };
-    let format = result?;
+    let (header, format) = result?;
+    ws.set_selected_protocol(header);
 
     let handler = server.into_handler(format);
     Ok(ws.on_upgrade(move |websocket| {
@@ -85,7 +85,8 @@ where
     }))
 }
 
-fn parse_protocol<F: FormatSet>(protocol: &str, formats: &F) -> Result<F::Format, WebsocketError> {
+fn parse_protocol<F: FormatSet>(header: HeaderValue, formats: &F) -> Result<(HeaderValue, F::Format), WebsocketError> {
+    let protocol = header.to_str()?;
     let mut parts = protocol.split('.');
     let protocol = parts.next().ok_or(WebsocketError::UnsupportedProtocol)?;
     if protocol != PROTOCOL_NAME {
@@ -96,7 +97,8 @@ fn parse_protocol<F: FormatSet>(protocol: &str, formats: &F) -> Result<F::Format
         return Err(WebsocketError::UnsupportedVersion);
     }
     let format = parts.next().ok_or(WebsocketError::UnsupportedProtocol)?;
-    formats.for_subprotocol(format).ok_or(WebsocketError::UnsupportedFormat)
+    let format = formats.for_subprotocol(format).ok_or(WebsocketError::UnsupportedFormat)?;
+    Ok((header, format))
 }
 
 #[derive(Debug, Error)]

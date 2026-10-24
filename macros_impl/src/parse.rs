@@ -251,7 +251,7 @@ mod test {
             $(
             #[test]
             fn $name() {
-                test_param_type(parse_quote!($($input)*), $output);
+                test_param_type(&parse_quote!($($input)*), &$output);
             }
             )*
         };
@@ -266,9 +266,8 @@ mod test {
         stream_result_option: Param::Result(Box::new(Param::Option(Box::new(Param::Stream(Type::Path(parse_quote!(bool)))))), Box::new(Param::Simple(Type::Path(parse_quote!(Error))))) => {Result<Option<impl Stream<Item=bool>>, Error>}
     ];
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn test_param_type(input: Type, expected: Param) {
-        let output: Param = (&input).try_into().expect("failed to parse input");
-        assert_eq!(output, expected);
+    fn test_param_type(input: &Type, expected: &Param) {
+        let output: Param = input.try_into().expect("failed to parse input");
+        assert_eq!(&output, expected);
     }
 }

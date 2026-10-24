@@ -28,7 +28,7 @@ missing_const_for_fn = { level = "allow", priority = 1 }
 
 
 [features]
-axum-websocket = ["dep:axum", "dep:tower"]
+axum-websocket = ["dep:axum", "dep:tower", "tokio"]
 browser-websocket = ["dep:web-sys", "dep:wasm-bindgen-futures", "dep:gloo-net", "dep:gloo-timers", "send_wrapper"]
 tokio_tungstenite = ["dep:tokio-tungstenite", "tokio"]
 tokio = ["dep:tokio"]
