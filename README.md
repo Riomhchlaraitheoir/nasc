@@ -1,5 +1,7 @@
 # Nasc
 
+> ⚠️ **Development Status:** Nasc is currently in active, pre-alpha development. It is being tested inside personal hobby projects and is **not yet published to crates.io**. The API is highly experimental and subject to breaking changes without notice. To experiment with it, track the git repository directly.
+
 **Nasc** (Irish for *link* or *bond*) is a bidirectional RPC framework for Rust.
 It allows you to define RPC services based on a trait definition.
 
@@ -12,6 +14,8 @@ It allows you to define RPC services based on a trait definition.
 - Transport agnostic: Several common transports supported out-of-the-box, with a `Connection` trait for you to implement your own support for any other transport
 
 ## Project Status
+
+
 **Nasc is primarily a hobby project.**
 While it is designed to be fully functional, robust and useful it was written first and foremost because it piqued my interest and I have several other projects that cna benefit from using this library
 
