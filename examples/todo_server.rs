@@ -10,10 +10,10 @@ use derive_more::Deref;
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use trait_rpc::connection::ConnectionOptions;
-use trait_rpc::format::cbor::Cbor;
-use trait_rpc::format::json::Json;
-use trait_rpc::websocket::axum::{WebsocketError, handle_websocket};
+use nasc::connection::ConnectionOptions;
+use nasc::format::cbor::Cbor;
+use nasc::format::json::Json;
+use nasc::websocket::axum::{WebsocketError, handle_websocket};
 
 include!("traits/todo.rs");
 

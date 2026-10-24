@@ -1,4 +1,4 @@
-use crate::{Args, Method, Param, Rpc};
+use crate::{Args, Method, Param, Service};
 use proc_macro2::Ident;
 use quote::ToTokens;
 use syn::parse::{Parse, ParseStream};
@@ -8,13 +8,13 @@ use syn::{parse_quote, Attribute, Expr, FnArg, GenericArgument, GenericParam, It
 
 impl Parse for Args {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut trait_rpc = None;
+        let mut nasc = None;
         while !input.is_empty() {
             let key: Ident = input.parse()?;
             let _eq_token: Token![=] = input.parse()?;
             match key.to_string().as_str() {
-                "trait_rpc" => {
-                    trait_rpc = Some(input.parse()?);
+                "nasc" => {
+                    nasc = Some(input.parse()?);
                 }
                 other => {
                     return Err(syn::Error::new_spanned(
@@ -28,14 +28,14 @@ impl Parse for Args {
             }
             input.parse::<Token![,]>()?;
         }
-        let trait_rpc: Path = trait_rpc.unwrap_or_else(|| parse_quote!(::trait_rpc));
+        let nasc: Path = nasc.unwrap_or_else(|| parse_quote!(::nasc));
         Ok(Self {
-            trait_rpc,
+            nasc,
         })
     }
 }
 
-pub fn parse_rpc(input: ItemTrait, args: Args) -> syn::Result<Rpc> {
+pub fn parse_service(input: ItemTrait, args: Args) -> syn::Result<Service> {
     let mut methods = vec![];
     for item in input.items {
         if let TraitItem::Fn(item) = item {
@@ -79,7 +79,7 @@ pub fn parse_rpc(input: ItemTrait, args: Args) -> syn::Result<Rpc> {
         }
         generic_types.push(ident);
     }
-    Ok(Rpc {
+    Ok(Service {
         args,
         docs,
         vis: input.vis,

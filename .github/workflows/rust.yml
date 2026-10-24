@@ -29,9 +29,9 @@ jobs:
           target
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Run clippy for macros
-      run: cargo clippy --all-targets --package trait-rpc-macros-impl -- -Dwarnings
+      run: cargo clippy --all-targets --package nasc-macros-impl -- -Dwarnings
     - name: Run tests for macros
-      run: cargo test --all-targets --package trait-rpc-macros-impl
+      run: cargo test --all-targets --package nasc-macros-impl
     - name: Run Clippy
       run: cargo clippy --all-targets --features __test -- -Dwarnings
     - name: Run Clippy for WASM target

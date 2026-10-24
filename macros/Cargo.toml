@@ -1,7 +1,8 @@
 [package]
-name = "trait-rpc-macros"
+name = "nasc-macros"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 
 [lints]
 workspace = true
@@ -10,6 +11,6 @@ workspace = true
 proc-macro = true
 
 [dependencies]
-macros-impl = { package = "trait-rpc-macros-impl", path = "../macros_impl" }
+macros-impl = { package = "nasc-macros-impl", path = "../macros_impl" }
 syn = "3.0.9"
 quote = "1.0.47"

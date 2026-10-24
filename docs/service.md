@@ -1,4 +1,4 @@
-# rpc
+# #[service]
 
 This macro should be applied to trait definition to make it the base of an RPC service
 
@@ -46,12 +46,12 @@ For details of how to interact with the generated items see [Crate docs](crate)
 
 This macro takes some arguments alongside the trait definition:
 
-- `trait_rpc`: A path to the actual `trait_rpc` crate (default: `::trait_rpc`)
+- `nasc`: A path to the actual `nasc` crate (default: `::nasc`)
 - `panic_handler`: The strategy for handling panics on this service, see [`panic_handler`](crate::panic_handler)
 
 eg:
 ```rust
-#[rpc(trait_rpc = custom::path::to::trait_rpc, panic_handler = catch)]
+#[rpc(nasc = custom::path::to::nasc, panic_handler = catch)]
 trait Service {
     fn call();
 }
@@ -85,7 +85,7 @@ For details on how streams function see [Crate docs](crate#Streams)
 
 ### Services
 
-Additional services can be spawned using `impl Rpc<SeviceName>`, this too can be used in either the parameters or the
+Additional services can be spawned using `impl Service<SeviceName>`, this too can be used in either the parameters or the
 return type
 
 For details on how services function see [Crate docs](crate#Services)

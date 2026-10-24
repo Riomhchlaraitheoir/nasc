@@ -1,2 +1,4 @@
 - Add support for AsyncRead/AsyncWrite
-- Document how to handler client stream timeouts
+- Document how to handle client stream timeouts
+- Add service definition to the connection handshake
+  - The actual root service that's being served should be positively confirmed before continuing the connection

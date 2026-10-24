@@ -5,7 +5,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use futures::stream::iter;
 use futures::{Stream, StreamExt};
-use macros::rpc;
+use macros::service;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,12 +14,12 @@ use tokio::sync::{RwLock, oneshot};
 use tokio::time::{sleep, timeout};
 use tracing::log::Level;
 use tracing::{Instrument, debug, info, info_span};
-use trait_rpc::connection::ConnectionOptions;
-use trait_rpc::format::json::Json;
-use trait_rpc::websocket::axum::{WebsocketError, handle_websocket};
-use trait_rpc::websocket::tokio_tungstenite::new_websocket_transport;
+use nasc::connection::ConnectionOptions;
+use nasc::format::json::Json;
+use nasc::websocket::axum::{WebsocketError, handle_websocket};
+use nasc::websocket::tokio_tungstenite::new_websocket_transport;
 
-#[rpc]
+#[service]
 trait Service {
     fn simple_get() -> String;
     fn simple_set(value: u64);

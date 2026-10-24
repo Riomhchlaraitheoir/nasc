@@ -977,6 +977,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "nasc"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "async-executor",
+ "async-lock",
+ "axum",
+ "axum-extra",
+ "bon",
+ "cfg_aliases",
+ "ciborium",
+ "derive_more",
+ "futures",
+ "gloo-net",
+ "gloo-timers",
+ "log",
+ "nasc-macros",
+ "pastey",
+ "pin-project",
+ "proptest",
+ "proptest-derive",
+ "send_wrapper",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "simple_logger",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.30.0",
+ "tower",
+ "tracing",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "whirlwind",
+]
+
+[[package]]
+name = "nasc-macros"
+version = "0.1.0"
+dependencies = [
+ "nasc-macros-impl",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "nasc-macros-impl"
+version = "0.1.0"
+dependencies = [
+ "convert_case 0.12.0",
+ "difference",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1718,65 +1777,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "trait-rpc"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "async-executor",
- "async-lock",
- "axum",
- "axum-extra",
- "bon",
- "cfg_aliases",
- "ciborium",
- "derive_more",
- "futures",
- "gloo-net",
- "gloo-timers",
- "log",
- "pastey",
- "pin-project",
- "proptest",
- "proptest-derive",
- "send_wrapper",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "simple_logger",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.30.0",
- "tower",
- "tracing",
- "trait-rpc-macros",
- "wasm-bindgen-futures",
- "web-sys",
- "whirlwind",
-]
-
-[[package]]
-name = "trait-rpc-macros"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn 3.0.9",
- "trait-rpc-macros-impl",
-]
-
-[[package]]
-name = "trait-rpc-macros-impl"
-version = "0.1.0"
-dependencies = [
- "convert_case 0.12.0",
- "difference",
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn 3.0.9",
 ]
 
 [[package]]

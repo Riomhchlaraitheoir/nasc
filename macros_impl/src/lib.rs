@@ -1,4 +1,4 @@
-use crate::parse::parse_rpc;
+use crate::parse::parse_service;
 use proc_macro2::Ident;
 use quote::ToTokens;
 use syn::{Expr, ItemTrait, Path, Type, Visibility, WherePredicate};
@@ -7,15 +7,15 @@ mod parse;
 
 mod output;
 
-/// The function to invoke the rpc macro
+/// The function to invoke the service macro
 ///
 /// # Errors
 /// Can return a [`syn::Error`] if it fails to parse the input or rejects some part of the input
-pub fn rpc(args: Args, input: ItemTrait) -> syn::Result<impl ToTokens> {
-    parse_rpc(input, args)
+pub fn service(args: Args, input: ItemTrait) -> syn::Result<impl ToTokens> {
+    parse_service(input, args)
 }
 
-struct Rpc {
+struct Service {
     args: Args,
     docs: Vec<Expr>,
     vis: Visibility,
@@ -45,5 +45,5 @@ enum Param {
 /// This contains any args in the attribute macro invocation that may affect parsing
 // There are no such args for now, but we will keep this just in case tha changes
 pub struct Args {
-    trait_rpc: Path,
+    nasc: Path,
 }

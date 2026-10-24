@@ -1,4 +1,4 @@
-//! Defines the RPC [`Message`] type which represents any message sent on the RPC connection
+//! Defines the RPC protocol's [`Message`] type which represents any message sent on the RPC connection
 
 use crate::connection::MethodID;
 use derive_more::{Display, From, Into, TryFrom, TryFromReprError};

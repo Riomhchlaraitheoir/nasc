@@ -6,7 +6,7 @@ pub struct Todo {
     description: String,
 }
 
-#[macros::rpc]
+#[macros::service]
 /// A service for managing to-do items
 trait TodoService {
     /// Get a list of to-do items

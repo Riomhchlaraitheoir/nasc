@@ -1,6 +1,6 @@
-use trait_rpc::connection::ConnectionOptions;
-use trait_rpc::format::json::Json;
-use trait_rpc::websocket::browser::new_websocket_transport;
+use nasc::connection::ConnectionOptions;
+use nasc::format::json::Json;
+use nasc::websocket::browser::new_websocket_transport;
 
 include!("traits/todo.rs");
 

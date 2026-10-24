@@ -7,9 +7,10 @@ version = "0.1.0"
 edition = "2024"
 
 [package]
-name = "trait-rpc"
+name = "nasc"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -48,7 +49,7 @@ bon = "3.10.2"
 thiserror = "2.0.21"
 axum = { version = "0.8.9", optional = true, features = ["ws"]}
 tower = { version = "0.5.3", optional = true }
-macros = { package = "trait-rpc-macros", path = "macros" }
+macros = { package = "nasc-macros", path = "macros" }
 futures = { version = "0.3.34", features = ["unstable", "bilock"] }
 tracing = "0.1.44"
 pin-project = "1.1.13"

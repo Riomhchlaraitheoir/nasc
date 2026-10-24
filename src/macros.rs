@@ -2,7 +2,7 @@
 #[doc(hidden)]
 pub mod imports {
     pub use crate::{
-        Handler, Rpc, RpcWithServer,
+        Handler, Service, ServiceWithServer,
         connection::{
             ServiceManager, TeardownGuard,
             client::{Client, ClientError, ClientResponseFuture},
@@ -28,8 +28,8 @@ pub mod imports {
 #[macro_export]
 macro_rules! method_id {
     ($service:ty => $method_name:ident) => {const {
-        const fn _assert_is_rpc_service<T: Rpc>() {}
-        _assert_is_rpc_service::<$service>();
+        const fn _assert_is_service<T: Service>() {}
+        _assert_is_service::<$service>();
         $crate::__macros::imports::paste! {
             <$service>::[<METHOD_ID_ $method_name>]
         }
@@ -38,7 +38,7 @@ macro_rules! method_id {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __generate_rpc {
+macro_rules! __generate_service {
     (
         docs = { $($docs:expr),* },
         vis = $vis:vis,
@@ -77,7 +77,7 @@ use $crate::__macros::imports::*;
 
 $(#[doc = $docs])*
 ///
-#[doc = " This is the [Rpc](Rpc) definition for this service" ]
+#[doc = " This is the [Service](Service) definition for this service" ]
 pub struct $name<$($generics),*>(PhantomData<fn() -> ($($generics,)*)>) where ():Sized, $($where_bounds)*;
 
 
@@ -85,7 +85,7 @@ impl<$($generics),*> $name<$($generics),*> where (): Sized, $($generics: 'static
     $(const [<METHOD_ID_ $method_name>]: MethodID = MethodID::_new($method_id);)*
 }
 
-impl<$($generics),*> Rpc for $name<$($generics),*> where (): Sized, $($generics: 'static,)* $($where_bounds)* {
+impl<$($generics),*> $crate::Service for $name<$($generics),*> where (): Sized, $($generics: 'static,)* $($where_bounds)* {
     fn service_name() -> &'static str {
         stringify!($name)
     }
@@ -112,7 +112,7 @@ impl<$($generics),*> $name<$($generics),*> where ():Sized, $($generics: 'static,
 }
 
 
-impl<_Server: [<$name Server>]<$($generics),*>, $($generics,)* _Runtime: AsyncRuntime, _Format: IsFormat> RpcWithServer<_Server, _Runtime, _Format> for $name<$($generics),*>
+impl<_Server: [<$name Server>]<$($generics),*>, $($generics,)* _Runtime: AsyncRuntime, _Format: IsFormat> ServiceWithServer<_Server, _Runtime, _Format> for $name<$($generics),*>
 where
     ():Sized,
     $($generics: Send + 'static,)*
@@ -340,8 +340,8 @@ macro_rules! __for_special_values {
     ($value:ident, $macro_name:ident($args:tt), impl $($(::)?futures::stream::)?Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
         $crate::$macro_name!(stream<$item>: $value, $args)
     };
-    ($value:ident, $macro_name:ident($args:tt), impl Rpc<$rpc:ty>) => {
-        $crate::$macro_name!(rpc<$rpc>: $value, $args)
+    ($value:ident, $macro_name:ident($args:tt), impl Service<$service:ty>) => {
+        $crate::$macro_name!(rpc<$service>: $value, $args)
     };
     ($value:ident, $macro_name:ident($args:tt), impl $($unexpected:tt)*) => {
         compile_error!(concat!("unexpected impl argument: impl ", stringify!($($unexpected)*)));

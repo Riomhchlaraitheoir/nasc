@@ -16,10 +16,10 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
 use tracing::warn;
-use trait_rpc::connection::ConnectionOptions;
-use trait_rpc::format::cbor::Cbor;
-use trait_rpc::format::json::Json;
-use trait_rpc::websocket::axum::{handle_websocket, WebsocketError};
+use nasc::connection::ConnectionOptions;
+use nasc::format::cbor::Cbor;
+use nasc::format::json::Json;
+use nasc::websocket::axum::{handle_websocket, WebsocketError};
 
 include!("traits/resources.rs");
 

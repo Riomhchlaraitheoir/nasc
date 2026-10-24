@@ -1,11 +1,11 @@
-use crate::{Method, Param, Rpc};
+use crate::{Method, Param, Service};
 use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{Expr, ExprLit, Lit, LitInt};
 
-impl ToTokens for Rpc {
+impl ToTokens for Service {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let trait_rpc = &self.args.trait_rpc;
+        let nasc = &self.args.nasc;
         let docs = {
             let docs = &self.docs;
             quote! {{
@@ -18,7 +18,7 @@ impl ToTokens for Rpc {
         let name = &self.name;
         let methods = &self.methods;
         tokens.extend(quote! {
-            #trait_rpc::__generate_rpc!{
+            #nasc::__generate_service!{
                 docs = #docs,
                 vis = #vis,
                 generics = [#(#ty_generics),*],
