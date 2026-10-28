@@ -9,7 +9,6 @@ use crate::connection::{Connection, ConnectionDriver};
 use async_channel::{Receiver, Sender, bounded};
 use futures::select;
 use tracing::error;
-use crate::runtime::AsyncRuntime;
 
 /// A channel-base connection, see [Module level documentation](self)
 pub struct ChannelConnection {
@@ -38,9 +37,9 @@ impl ChannelConnection {
 }
 
 impl Connection for ChannelConnection {
-    async fn run<R: AsyncRuntime>(
+    async fn run(
         self,
-        driver: ConnectionDriver<R>,
+        driver: ConnectionDriver,
     ) -> Result<(), impl Display> {
         let mut next_message_in = pin!(self.incoming.recv().fuse());
         let mut next_message_out = pin!(driver.next_outgoing_message().fuse());

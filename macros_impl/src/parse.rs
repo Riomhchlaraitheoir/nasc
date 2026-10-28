@@ -191,6 +191,18 @@ impl TryFrom<&Type> for Param {
                                 "Stream must declare Item type as: `impl Stream<Item = <item>>`",
                             ))
                         }
+                    } else if ident == "Service" {
+                        if let PathArguments::AngleBracketed(args) = arguments
+                            && args.args.len() == 1
+                            && let GenericArgument::Type(ty) = &args.args[0]
+                        {
+                            Ok(Self::Service(ty.clone()))
+                        } else {
+                            Err(syn::Error::new(
+                                type_span,
+                                "Stream must declare Item type as: `impl Stream<Item = <item>>`",
+                            ))
+                        }
                     } else {
                         Err(syn::Error::new(type_span, "unsupported impl type"))
                     }

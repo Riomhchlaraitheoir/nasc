@@ -30,14 +30,14 @@ missing_const_for_fn = { level = "allow", priority = 1 }
 
 [features]
 axum-websocket = ["dep:axum", "dep:tower", "tokio"]
-browser-websocket = ["dep:web-sys", "dep:wasm-bindgen-futures", "dep:gloo-net", "dep:gloo-timers", "send_wrapper"]
+browser-websocket = ["dep:web-sys", "dep:wasm-bindgen-futures", "dep:gloo-net", "send_wrapper"]
 tokio_tungstenite = ["dep:tokio-tungstenite", "tokio"]
 tokio = ["dep:tokio"]
 
 # Formats
-json = ["serde", "dep:serde_json"]
-browser-json = ["serde", "dep:serde-wasm-bindgen", "dep:web-sys", "dep:wasm-bindgen-futures"]
-cbor = ["serde", "dep:ciborium"]
+json = ["dep:serde", "dep:serde_json"]
+browser-json = ["dep:serde", "dep:serde-wasm-bindgen", "dep:web-sys", "dep:wasm-bindgen-futures"]
+cbor = ["dep:serde", "dep:ciborium"]
 
 # Internal helper features for CI/CD, defined in a single place to avoid mistakes when adding/removeing features
 __test = ["axum-websocket", "json", "cbor", "tokio_tungstenite", "dep:tokio"]
@@ -58,6 +58,7 @@ async-channel = "2.5.0"
 pastey = "0.2.3"
 whirlwind = "0.1.1"
 async-lock = "3.4.2"
+futures-timer = "3.0.4"
 
 # Formats
 serde_json = { version = "1.0.154", optional = true }
@@ -68,8 +69,8 @@ log = "0.4.34"
 wasm-bindgen-futures = { version = "0.4", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 gloo-net = { version = "0.7.0", optional = true, features = ["websocket"] }
-gloo-timers = { version = "0.4.0", optional = true, features = ["futures"] }
 send_wrapper = { version = "0.6.0", optional = true, features = ["futures"] }
+futures-timer = { version = "3.0.4", features = ["wasm-bindgen"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
 version = "0.3"

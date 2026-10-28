@@ -8,7 +8,6 @@ use futures::stream::{SplitSink, SplitStream};
 use tracing::{debug, warn};
 use crate::connection::{Connection, ConnectionDriver};
 use crate::connection::message::Message;
-use crate::runtime::AsyncRuntime;
 
 /// A Sink/Stream based connection, sending and receiving serialised binary messages
 pub struct SinkStreamConn<Sink, Stream> {
@@ -40,7 +39,7 @@ where
     In: Stream<Item = Result<Vec<u8>, RecvError>> + Unpin + 'static,
     RecvError: Display + 'static,
 {
-    async fn run<R: AsyncRuntime>(self, driver: ConnectionDriver<R>) -> Result<(), impl Display> {
+    async fn run(self, driver: ConnectionDriver) -> Result<(), impl Display> {
         let Self { mut sink, mut stream } = self;
         let mut next_out = pin!(driver.next_outgoing_message().fuse());
         loop {

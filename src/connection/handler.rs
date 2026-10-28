@@ -2,7 +2,6 @@ use std::panic::AssertUnwindSafe;
 use crate::Handler;
 use crate::connection::message::{HandleError, RequestID};
 use crate::connection::{MethodID, ServiceManager, TeardownGuard};
-use crate::runtime::AsyncRuntime;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 
@@ -21,13 +20,13 @@ impl<H> RegisteredHandler<H> {
     }
 }
 
-impl<R: AsyncRuntime, H: Handler<R>> RawHandler<R> for RegisteredHandler<H> {
+impl<H: Handler> RawHandler for RegisteredHandler<H> {
     fn handle(
         &self,
         request_id: RequestID,
         method_id: MethodID,
         request: Vec<u8>,
-        stream_handler: ServiceManager<R>,
+        stream_handler: ServiceManager,
     ) -> BoxFuture<'_, Result<Vec<u8>, HandleError>>
     {
         Box::pin(async move {
@@ -42,13 +41,13 @@ impl<R: AsyncRuntime, H: Handler<R>> RawHandler<R> for RegisteredHandler<H> {
     }
 }
 
-pub trait RawHandler<R: AsyncRuntime>: Send + Sync + 'static {
+pub trait RawHandler: Send + Sync + 'static {
     /// takes the request and returns a response, see [trait documentation](Self) for details
     fn handle(
         &self,
         request_id: RequestID,
         method_id: MethodID,
         request: Vec<u8>,
-        stream_handler: ServiceManager<R>,
+        stream_handler: ServiceManager,
     ) -> BoxFuture<'_, Result<Vec<u8>, HandleError>>;
 }

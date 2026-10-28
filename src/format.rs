@@ -12,7 +12,7 @@ compile_error!("browser-json is only available on wasm32 arch");
 pub mod cbor;
 
 /// This specifies types which represent formats, but does not prescribe supporting any particular type
-pub trait IsFormat: Clone + Send + Sync + 'static {
+pub trait Format: Clone + Send + Sync + 'static {
     /// The HTTP content-type related to this format
     fn content_type(&self) -> &'static str;
 
@@ -20,18 +20,14 @@ pub trait IsFormat: Clone + Send + Sync + 'static {
     fn subprotocol(&self) -> &'static str;
 }
 
-/// A format which is able to deserialise `Read` and serialise `Write`
-pub trait Format<Read, Write>: ReadFormat<Read> + WriteFormat<Write> + IsFormat {
-}
-
 /// A format which is able to deserialise `Read`
-pub trait ReadFormat<Read>: Send + Sync + IsFormat {
+pub trait ReadFormat<Read>: Send + Sync + Format {
     /// Read a value from the given `Read`
     fn read(&self, reader: &[u8]) -> Result<Read, Box<dyn Error + Send>>;
 }
 
 /// A format which is able to serialise `Write`
-pub trait WriteFormat<Write>: Send + Sync + IsFormat {
+pub trait WriteFormat<Write>: Send + Sync + Format {
     /// write the given value to the given `Write`
     fn write(&self, value: Write) -> Result<Vec<u8>, Box<dyn Error + Send>>;
 }
@@ -70,10 +66,10 @@ where
     }
 }
 
-impl<A, B> IsFormat for EitherFormat<A, B>
+impl<A, B> Format for EitherFormat<A, B>
 where
-    A: IsFormat,
-    B: IsFormat,
+    A: Format,
+    B: Format,
 {
     fn content_type(&self) -> &'static str {
         match self {
@@ -90,18 +86,11 @@ where
     }
 }
 
-impl<A, B, Read, Write> Format<Read, Write> for EitherFormat<A, B>
-where A: Format<Read, Write>,
-    B: Format<Read, Write>,
-{
-
-}
-
 /// A set of multiple possible formats, design for servers to support multiple formats,
 /// easiest way to create a `FormatSet` is a tuple of formats
 pub trait FormatSet: Clone {
     /// The format type outputted by this set
-    type Format;
+    type Format: Format;
 
     /// Get a format that matches the type string
     fn for_subprotocol(&self, subprotocol: &str) -> Option<Self::Format>;
@@ -151,7 +140,7 @@ impl<A: FormatSet, B: FormatSet, C: FormatSet> FormatSet for (A, B, C) {
     }
 }
 
-impl<F: IsFormat> FormatSet for F {
+impl<F: Format> FormatSet for F {
     type Format = F;
 
     fn for_subprotocol(&self, subprotocol: &str) -> Option<Self::Format> {

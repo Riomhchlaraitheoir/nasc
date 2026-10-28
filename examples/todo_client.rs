@@ -13,10 +13,9 @@ async fn main() {
         let options = ConnectionOptions::builder()
             .default_client_timeout(Duration::from_secs(10)) // <-- set default request timeout
             .build();
-        let client = new_websocket_transport("ws://localhost:8080/api/todo", Json, ||{
+        new_websocket_transport::<TodoService,_>("ws://localhost:8080/api/todo", Json, ||{
             println!("Client closed");
-        }, options).await.unwrap();
-        TodoService::client(client, Json)
+        }, options).await.unwrap()
     };
     for todo in client.get_todos().await.expect("get_todos failed") {
         println!("{todo:?}");

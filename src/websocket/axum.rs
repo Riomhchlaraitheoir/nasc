@@ -33,7 +33,7 @@ use {
 /// May reject the connection
 pub fn handle_websocket<R, F>(
     mut ws: WebSocketUpgrade,
-    server: impl IntoHandler<R, TokioRuntime, F::Format> + Send,
+    server: impl IntoHandler<R, F::Format>,
     formats: &F,
     options: ConnectionOptions,
 ) -> Result<Response, WebsocketError>

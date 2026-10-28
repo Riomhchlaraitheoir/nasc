@@ -1,25 +1,24 @@
 #![doc = include_str!("./examples.md")]
 
+use crate::SubscriberModule::SubscriberClientImpl;
 use axum::Router;
-use axum::extract::{FromRequestParts, WebSocketUpgrade};
-use axum::http::request::Parts;
+use axum::extract::{WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::post;
 use derive_more::{AsRef, Deref};
-use futures::{Stream};
+use nasc::IntoHandler;
+use nasc::connection::ConnectionOptions;
+use nasc::connection::client::Client;
+use nasc::format::cbor::Cbor;
+use nasc::format::json::Json;
+use nasc::format::{Format, FormatSet};
+use nasc::websocket::axum::{WebsocketError, handle_websocket};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
-use tokio_stream::StreamExt;
-use tracing::warn;
-use nasc::connection::ConnectionOptions;
-use nasc::format::cbor::Cbor;
-use nasc::format::json::Json;
-use nasc::websocket::axum::{handle_websocket, WebsocketError};
 
 include!("traits/resources.rs");
 
@@ -27,8 +26,7 @@ include!("traits/resources.rs");
 async fn main() {
     let state = State::default();
     let app = Router::new()
-        .route("/api/books", post(handle::<Book>))
-        .route("/api/authors", post(handle::<Author>))
+        .route("/api", post(handle))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
@@ -37,9 +35,12 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn handle<R: Debug + Resource + Serialize + DeserializeOwned>(conn: WebSocketUpgrade, server: ResourceServer<R>) -> impl IntoResponse {
+async fn handle(conn: WebSocketUpgrade, state: axum::extract::State<State>) -> impl IntoResponse {
+    let server = ResourcesServer {
+        state: state.0,
+    };
     let result =
-        handle_websocket::<Resources<R>, _>(conn, server, &(Json, Cbor), ConnectionOptions::default());
+        handle_websocket::<ResourcesService, _>(conn, server, &(Json, Cbor), ConnectionOptions::default());
     match result {
         Ok(response) => response,
         Err(
@@ -50,6 +51,9 @@ async fn handle<R: Debug + Resource + Serialize + DeserializeOwned>(conn: WebSoc
         ) => StatusCode::BAD_REQUEST.into_response(),
     }
 }
+
+/// type alias to refer to any of the formats in the format set
+type AnyFormat = <(Json, Cbor) as FormatSet>::Format;
 
 #[derive(AsRef, Default, Clone)]
 struct State {
@@ -73,9 +77,31 @@ impl<T> Clone for ResourceState<T> {
     }
 }
 
+struct ResourcesServer {
+    state: State,
+}
+
 #[derive(Deref)]
-struct ResourceServer<T> {
+struct ResourceServer<T: Resource> {
+    subscribers: RwLock<Vec<SubscriberClientImpl<AnyFormat, T>>>,
+    #[deref]
     state: ResourceState<T>,
+}
+
+impl ResourcesServiceServer<AnyFormat> for ResourcesServer {
+    #[allow(refining_impl_trait, reason = "demonstration only; is in example")]
+    async fn books(&self) -> ResourceServer<Book> {
+        ResourceServer {
+            subscribers: RwLock::default(),
+            state: self.state.books.clone(),
+        }
+    }
+    async fn authors(&self) -> impl IntoHandler<ResourceService<Author>, AnyFormat> {
+        ResourceServer {
+            subscribers: RwLock::default(),
+            state: self.state.authors.clone(),
+        }
+    }
 }
 
 impl<T: Resource> Default for ResourceState<T> {
@@ -87,21 +113,7 @@ impl<T: Resource> Default for ResourceState<T> {
     }
 }
 
-impl<T> FromRequestParts<State> for ResourceServer<T>
-where
-    State: AsRef<ResourceState<T>>,
-{
-    type Rejection = Infallible;
-
-    async fn from_request_parts(_: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
-        let state = state.as_ref();
-        Ok(Self {
-            state: state.clone(),
-        })
-    }
-}
-
-trait Resource: Clone + Send + Sync + 'static {
+trait Resource: Serialize + DeserializeOwned + Clone + Debug + Send + Sync + 'static {
     fn id(&self) -> u64;
 }
 
@@ -117,17 +129,9 @@ impl Resource for Author {
     }
 }
 
-impl<T: Resource> ResourcesServer<T> for ResourceServer<T> {
-    async fn subscribe(&self) -> impl Stream<Item=T> + Send + 'static {
-        tokio_stream::wrappers::BroadcastStream::new(self.new.subscribe()).filter_map(|result| {
-            match result {
-                Ok(res) => Some(res),
-                Err(error) => {
-                    warn!(?error, "client lagging on subscribe reading");
-                    None
-                }
-            }
-        })
+impl<T: Resource> ResourceServiceServer<AnyFormat, T> for ResourceServer<T> {
+    async fn subscribe(&self, subscriber: SubscriberClientImpl<AnyFormat, T>) {
+        self.subscribers.write().await.push(subscriber);
     }
 
     async fn list(&self) -> Vec<T> {

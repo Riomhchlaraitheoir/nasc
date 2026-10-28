@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use nasc::connection::ConnectionOptions;
 use nasc::format::cbor::Cbor;
+use nasc::format::Format;
 use nasc::format::json::Json;
 use nasc::websocket::axum::{WebsocketError, handle_websocket};
 
@@ -30,7 +31,7 @@ struct Todos {
     auth: TypedHeader<headers::Authorization<Bearer>>,
 }
 
-impl TodoServiceServer for Todos {
+impl<F: Format> TodoServiceServer<F> for Todos {
     async fn get_todos(&self) -> Vec<Todo> {
         self.todos.read().await.deref().clone()
     }

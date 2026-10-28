@@ -57,6 +57,11 @@ impl ToTokens for Method {
             .iter()
             .flat_map(|(_, param)| param.streamed_types());
         let streamed_out = self.ret.streamed_types();
+        let services_in = self
+            .args
+            .iter()
+            .flat_map(|(_, param)| param.services());
+        let services_out = self.ret.services();
 
         tokens.extend(quote! {{
             id = #id,
@@ -66,6 +71,8 @@ impl ToTokens for Method {
             return_type = #return_type,
             streamed_in = [#(#streamed_in),*],
             streamed_out = [#(#streamed_out),*],
+            services_in = [#(#services_in),*],
+            services_out = [#(#services_out),*],
         }});
     }
 }
@@ -95,6 +102,10 @@ impl Param {
                 let ty = ty.to_token_stream();
                 quote! { impl futures::stream::Stream<Item=#ty> }
             }
+            Self::Service(ty) => {
+                let ty = ty.to_token_stream();
+                quote! { impl Service<#ty> }
+            }
             Self::Option(param) => {
                 let param = param.normal();
                 quote! { Option<#param> }
@@ -119,8 +130,33 @@ impl Param {
 
     fn streamed_types_inner(&self, types: &mut Vec<TokenStream>) {
         match self {
-            Self::Simple(_) => {}
+            Self::Simple(_) | Self::Service(_) => {}
             Self::Stream(ty) => {
+                types.push(ty.to_token_stream());
+            }
+            Self::Option(value) => value.streamed_types_inner(types),
+            Self::Result(ok, err) => {
+                ok.streamed_types_inner(types);
+                err.streamed_types_inner(types);
+            }
+            Self::Tuple(params) => {
+                for param in params {
+                    param.streamed_types_inner(types);
+                }
+            }
+        }
+    }
+
+    fn services(&self) -> Vec<TokenStream> {
+        let mut types = Vec::new();
+        self.services_inner(&mut types);
+        types
+    }
+
+    fn services_inner(&self, types: &mut Vec<TokenStream>) {
+        match self {
+            Self::Simple(_) | Self::Stream(_) => {}
+            Self::Service(ty) => {
                 types.push(ty.to_token_stream());
             }
             Self::Option(value) => value.streamed_types_inner(types),

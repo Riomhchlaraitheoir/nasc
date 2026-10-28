@@ -1,8 +1,8 @@
 //! Defines a websocket client
 
-use crate::connection::{client::Client, new_client_conn, Connection, ConnectionOptions};
-use crate::format::IsFormat;
-use crate::{PROTOCOL_NAME, PROTOCOL_VERSION};
+use crate::connection::{new_client_conn, Connection, ConnectionOptions};
+use crate::format::Format;
+use crate::{Service, PROTOCOL_NAME, PROTOCOL_VERSION};
 use crate::runtime::TokioRuntime;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
@@ -14,12 +14,12 @@ use crate::__macros::imports::Sink;
 use crate::connection::sink_stream::SinkStreamConn;
 
 /// Create a new websocket transport layer to the given URL
-pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + Send + Sync + 'static>(
+pub async fn new_websocket_transport<S: Service, F: Format>(
     url: impl AsRef<str>,
-    format: Format,
-    on_close: OnClose,
+    format: F,
+    on_close: impl FnOnce() + Send + Sync + 'static,
     options: ConnectionOptions
-) -> Result<Client<TokioRuntime>, Error> {
+) -> Result<S::Client<F>, Error> {
     let protocol = format!("{PROTOCOL_NAME}.{PROTOCOL_VERSION}.{}", format.subprotocol());
     let (websocket, _) = connect_async(
         ClientRequestBuilder::new(url.as_ref().parse().expect("failed to parse url"))
@@ -58,5 +58,6 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + Send 
         on_close();
     });
 
-    Ok(client_ready.1.await.expect("client failed to start"))
+    let client = client_ready.1.await.expect("client failed to start");
+    Ok(S::client(client, format))
 }

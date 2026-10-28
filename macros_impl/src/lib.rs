@@ -37,6 +37,7 @@ struct Method {
 enum Param {
     Simple(Type),
     Stream(Type),
+    Service(Type),
     Option(Box<Self>),
     Result(Box<Self>, Box<Self>),
     Tuple(Vec<Self>),

@@ -1,6 +1,6 @@
 //! Provides support for the JSON ([JavaScript Object Notation](https://www.json.org/)) format
 
-use crate::format::{Format, IsFormat, ReadFormat, WriteFormat};
+use crate::format::{Format, ReadFormat, WriteFormat};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::error::Error;
@@ -11,7 +11,7 @@ const CONTENT_TYPE: &str = "application/json";
 /// [JavaScript Object Notation](https://www.json.org/)
 pub struct Json;
 
-impl IsFormat for Json {
+impl Format for Json {
     fn content_type(&self) -> &'static str {
         CONTENT_TYPE
     }
@@ -36,11 +36,4 @@ where
     fn write(&self, value: Write) -> Result<Vec<u8>, Box<dyn Error + Send>> {
         serde_json::to_vec(&value).map_err(|error| Box::new(error) as Box<dyn Error + Send>)
     }
-}
-
-impl<Read, Write> Format<Read, Write> for Json
-where
-    Read: DeserializeOwned,
-    Write: Serialize,
-{
 }

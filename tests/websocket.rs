@@ -18,6 +18,7 @@ use nasc::connection::ConnectionOptions;
 use nasc::format::json::Json;
 use nasc::websocket::axum::{WebsocketError, handle_websocket};
 use nasc::websocket::tokio_tungstenite::new_websocket_transport;
+use crate::ServiceModule::ServiceClientImpl;
 
 #[service]
 trait Service {
@@ -37,7 +38,7 @@ struct ServiceImpl {
     state: State<Arc<RwLock<ServerState>>>,
 }
 
-impl ServiceServer for ServiceImpl {
+impl ServiceServer<Json> for ServiceImpl {
     async fn simple_get(&self) -> String {
         "hello world".to_owned()
     }
@@ -103,11 +104,10 @@ async fn websocket_test() {
     );
     info!("Server running");
     sleep(Duration::from_secs(1)).await;
-    let client = {
-        let client = new_websocket_transport("ws://localhost:9865/", Json, || {}, ConnectionOptions::default())
+    let client: ServiceClientImpl<Json> = {
+        new_websocket_transport::<Service, _>("ws://localhost:9865/", Json, || {}, ConnectionOptions::default())
             .await
-            .expect("failed to create client");
-        Service::client(client, Json)
+            .expect("failed to create client")
     };
 
     let executor = Executor::new();

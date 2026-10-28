@@ -6,7 +6,7 @@ pub mod message;
 pub mod sink_stream;
 mod handler;
 
-use crate::Handler;
+use crate::{Handler, Service};
 use crate::__macros::imports::Stream;
 use crate::connection::client::{Client, ClientStream, ClientStreamState};
 use crate::connection::message::{
@@ -34,6 +34,7 @@ use std::time::Duration;
 use tracing::{debug, error};
 use whirlwind::ShardMap;
 use crate::connection::handler::{RawHandler, RegisteredHandler};
+use crate::format::Format;
 
 /// Identifies a certain request
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, Display, Ord, PartialOrd)]
@@ -76,9 +77,9 @@ impl<T: From<u32>> Series<T> {
 /// Represents the underlying connection
 pub trait Connection {
     /// Run the connection, handling incoming and outgoing messages
-    fn run<R: AsyncRuntime>(
+    fn run(
         self,
-        driver: ConnectionDriver<R>,
+        driver: ConnectionDriver,
     ) -> impl Future<Output = Result<(), impl Display>> + 'static;
 }
 
@@ -92,20 +93,20 @@ pub struct ConnectionOptions {
 /// A signal that the connection is closed and the manager should drop
 pub struct ConnectionClosed;
 
-struct ConnectionManager<R: AsyncRuntime> {
+struct ConnectionManager {
     response_waiters: ShardMap<RequestID, ResponseWaiter>,
     incoming_streams: ShardMap<StreamID, Sender<Vec<u8>>>,
     service_ids: Series<ServiceID>,
     stream_ids: Series<StreamID>,
     request_ids: Series<RequestID>,
-    handlers: ShardMap<ServiceID, Arc<dyn RawHandler<R>>>,
+    handlers: ShardMap<ServiceID, Arc<dyn RawHandler>>,
     streams: ShardMap<StreamID, ServerStream>,
     message_sender: Sender<Message>,
     pending_streams: ShardMap<StreamID, AbortHandle>,
     pending_handles: ShardMap<RequestID, AbortHandle>,
     is_server: bool,
     options: ConnectionOptions,
-    runtime: R
+    runtime: Box<dyn AsyncRuntime>,
 }
 
 type ServerStream = (Arc<Mutex<BoxStream<'static, Vec<u8>>>>, TeardownGuard);
@@ -118,20 +119,21 @@ type ResponseWaiter = oneshot::Sender<Result<Vec<u8>, HandleError>>;
     clippy::unused_async,
     reason = "Allow for future async and maintain symmetry with new_server_conn"
 )]
-pub async fn new_client_conn<R: AsyncRuntime>(options: ConnectionOptions, runtime: R) -> (Client<R>, ConnectionDriver<R>) {
+pub async fn new_client_conn<S: Service>(options: ConnectionOptions, runtime: impl AsyncRuntime) -> (Client<S>, ConnectionDriver) {
     let (driver, teardown_guard) = new_driver(options, true, runtime);
     let client = Client {
         manager: driver.manager.clone(),
         service_id: 0.into(),
         guard: teardown_guard,
-        default_timeout: driver.manager.options.default_client_timeout
+        default_timeout: driver.manager.options.default_client_timeout,
+        _service: PhantomData,
     };
     (client, driver)
 }
 
 /// Creates a new Server for the RPC connection from the given handler,
 /// also returns a [`ConnectionDriver`] to run the event loop
-pub async fn new_server_conn<R: AsyncRuntime>(handler: impl Handler<R> + 'static, options: ConnectionOptions, runtime: R) -> ConnectionDriver<R> {
+pub async fn new_server_conn(handler: impl Handler + 'static, options: ConnectionOptions, runtime: impl AsyncRuntime) -> ConnectionDriver {
     let (driver, teardown_guard) = new_driver(options, true, runtime);
     driver
         .manager
@@ -141,7 +143,7 @@ pub async fn new_server_conn<R: AsyncRuntime>(handler: impl Handler<R> + 'static
     driver
 }
 
-fn new_driver<R: AsyncRuntime>(options: ConnectionOptions, is_server: bool, runtime: R) -> (ConnectionDriver<R>, TeardownGuard) {
+fn new_driver(options: ConnectionOptions, is_server: bool, runtime: impl AsyncRuntime) -> (ConnectionDriver, TeardownGuard) {
     let (message_sender, message_receiver) = bounded(32);
     let (teardown_guard, teardown_signal) = new_teardown();
     let manager = Arc::new(ConnectionManager {
@@ -157,7 +159,7 @@ fn new_driver<R: AsyncRuntime>(options: ConnectionOptions, is_server: bool, runt
         pending_handles: ShardMap::new(),
         is_server,
         options,
-        runtime,
+        runtime: Box::new(runtime),
     });
     let driver = ConnectionDriver {
         manager: Arc::clone(&manager),
@@ -167,7 +169,7 @@ fn new_driver<R: AsyncRuntime>(options: ConnectionOptions, is_server: bool, runt
     (driver, teardown_guard)
 }
 
-impl<R: AsyncRuntime> ConnectionManager<R> {
+impl ConnectionManager {
     async fn send_message(&self, message: Message) {
         if self.message_sender.send(message).await.is_err() {
             warn!("Connection closed");
@@ -210,7 +212,7 @@ impl<R: AsyncRuntime> ConnectionManager<R> {
                     };
                     let (abort_handle, abort_registration) = AbortHandle::new_pair();
                     self.pending_handles.insert(request_id, abort_handle).await;
-                    self.runtime.spawn(Abortable::new(task, abort_registration).map(drop));
+                    self.runtime.spawn(Box::pin(Abortable::new(task, abort_registration).map(drop)));
                 } else {
                     warn!("Service {service_id} not found");
                     self.send_message(Message::Response {
@@ -277,7 +279,7 @@ impl<R: AsyncRuntime> ConnectionManager<R> {
                     };
                     let (abort_handle, abort_registration) = AbortHandle::new_pair();
                     self.pending_streams.insert(stream_id, abort_handle).await;
-                    self.runtime.spawn(Abortable::new(task, abort_registration).map(drop));
+                    self.runtime.spawn(Box::pin(Abortable::new(task, abort_registration).map(drop)));
                 } else {
                     warn!("Stream {stream_id} not found, sending Done");
                     if let Err(error) = self
@@ -324,22 +326,22 @@ impl<R: AsyncRuntime> ConnectionManager<R> {
 
     fn spawn_send(&self, message: Message) {
         let sender = self.message_sender.clone();
-        self.runtime.spawn(async move {
+        self.runtime.spawn(Box::pin(async move {
             if let Err(error) = sender.send(message.clone()).await {
                 error!("Failed to send message ({message:?}): {error}");
             }
-        });
+        }));
     }
 }
 
 /// Allows creation of new services/streams
-pub struct ServiceManager<R: AsyncRuntime>(Arc<ConnectionManager<R>>);
+pub struct ServiceManager(Arc<ConnectionManager>);
 
-impl<R: AsyncRuntime> ServiceManager<R> {
+impl ServiceManager {
     /// Create a new outgoing service
     pub async fn outgoing_service(
         &self,
-        handler: impl Handler<R> + 'static,
+        handler: impl Handler + 'static,
         guard: TeardownGuard,
     ) -> ServiceID {
         let service_id = self.0.service_ids.next();
@@ -356,14 +358,16 @@ impl<R: AsyncRuntime> ServiceManager<R> {
         clippy::unused_async,
         reason = "Keep this async for forward compatability and consistency with other similar methods"
     )]
-    pub async fn incoming_service(&self, service_id: ServiceID, guard: TeardownGuard) -> Client<R> {
+    pub async fn incoming_service<S: Service, F: Format>(&self, service_id: ServiceID, guard: TeardownGuard, format: F) -> S::Client<F> {
         debug!("Received incoming service {service_id}");
-        Client {
+        let client = Client {
             manager: Arc::clone(&self.0),
             service_id,
             guard,
-            default_timeout: self.0.options.default_client_timeout
-        }
+            default_timeout: self.0.options.default_client_timeout,
+            _service: PhantomData
+        };
+        S::client(client, format)
     }
 
     /// Create a new outgoing stream
@@ -387,7 +391,7 @@ impl<R: AsyncRuntime> ServiceManager<R> {
         &self,
         stream_id: StreamID,
         guard: TeardownGuard,
-    ) -> impl Stream<Item = Vec<u8>> + Send + 'static + use<R> {
+    ) -> impl Stream<Item = Vec<u8>> + Send + 'static + use<> {
         debug!("Received incoming stream {stream_id}");
         let (sender, receiver) = bounded(10);
         self.0.incoming_streams.insert(stream_id, sender).await;
@@ -406,14 +410,14 @@ impl<R: AsyncRuntime> ServiceManager<R> {
 /// Manages both waiting for requests/responses and sending requests/responses
 ///
 /// Automatically terminates when the last client/handler is dropped
-pub struct ConnectionDriver<R: AsyncRuntime> {
+pub struct ConnectionDriver {
     // TODO: make fields pub and allow Connection impl to drive loop
-    manager: Arc<ConnectionManager<R>>,
+    manager: Arc<ConnectionManager>,
     message_receiver: Receiver<Message>,
     teardown_signal: Mutex<TeardownSignal>,
 }
 
-impl<R: AsyncRuntime> ConnectionDriver<R> {
+impl ConnectionDriver {
     /// Consume the incoming message and handle it appropriately, this function will spawn a new
     /// task if it does anything that might take some time (calling handler methods, polling streams)
     pub async fn consume_incoming_message(
@@ -458,7 +462,6 @@ fn new_teardown() -> (TeardownGuard, TeardownSignal) {
 ///
 /// When this guard and all of its clones are dropped, the `ConnectionDriver` will stop running and
 /// the underlying `ConnectionManager` will be dropped
-#[clippy::has_significant_drop]
 pub struct TeardownGuard(
     #[allow(
         unused,

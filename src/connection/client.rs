@@ -4,33 +4,36 @@ use crate::__macros::imports::StreamID;
 use crate::connection::TeardownGuard;
 use crate::connection::message::{HandleError, Message, RequestID, ServiceID, StreamMessage};
 use crate::connection::{ConnectionManager, MethodID, ServiceManager};
-use crate::runtime::AsyncRuntime;
 use async_channel::{Receiver, SendError};
 use futures::channel::oneshot;
 use futures::future::{BoxFuture, Either, FusedFuture, Map, Select, select};
 use futures::{FutureExt, Stream};
 use pin_project::{pin_project, pinned_drop};
 use std::error::Error;
+use std::marker::PhantomData;
 use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
+use futures_timer::Delay;
 use thiserror::Error;
 use tracing::error;
-use crate::assert_future;
+use crate::{assert_future, Service};
 
 /// A client which sends requests on the connection and awaits responses
-#[clippy::has_significant_drop]
-pub struct Client<R: AsyncRuntime> {
-    pub(super) manager: Arc<ConnectionManager<R>>,
+///
+/// Generic `S` indicates the service this client is for, purely for type safety
+pub struct Client<S: Service> {
+    pub(super) manager: Arc<ConnectionManager>,
     pub(super) service_id: ServiceID,
     #[doc(hidden)]
     pub guard: TeardownGuard,
     pub(super) default_timeout: Option<Duration>,
+    pub(crate) _service: PhantomData<S>,
 }
 
-impl<R: AsyncRuntime> Client<R> {
+impl<S: Service> Client<S> {
     /// Send a request and wait for the response
     ///
     /// # Errors
@@ -40,7 +43,7 @@ impl<R: AsyncRuntime> Client<R> {
         payload: impl Future<Output = Result<Vec<u8>, ClientError>> + Send + 'static,
         method_id: MethodID,
         response: impl AsyncFnOnce(Vec<u8>) -> Result<T, ClientError>
-    ) -> ClientResponseFuture<impl Future<Output = Result<T, ClientError>>, R>
+    ) -> ClientResponseFuture<impl Future<Output = Result<T, ClientError>>>
     {
         let request_id = self.manager.request_ids.next();
         let future = CancellableFuture {
@@ -53,7 +56,6 @@ impl<R: AsyncRuntime> Client<R> {
         let future = ClientResponseFuture {
             future,
             timeout: self.default_timeout,
-            runtime: self.manager.runtime.clone(),
         };
         assert_future::<Result<T, ClientError>>(&future);
         future
@@ -92,12 +94,12 @@ impl<R: AsyncRuntime> Client<R> {
 
     #[must_use]
     /// Returns a [`ServiceManager`]
-    pub fn service_manager(&self) -> ServiceManager<R> {
+    pub fn service_manager(&self) -> ServiceManager {
         ServiceManager(self.manager.clone())
     }
 }
 
-impl<R: AsyncRuntime> Drop for Client<R> {
+impl<S: Service> Drop for Client<S> {
     fn drop(&mut self) {
         self.manager.spawn_send(Message::ServiceDropped {
             service_id: self.service_id,
@@ -125,13 +127,12 @@ pub enum ClientError {
     Deserialise(Box<dyn Error + Send>),
 }
 
-#[clippy::has_significant_drop]
 #[pin_project(PinnedDrop)]
-pub(super) struct ClientStream<R: AsyncRuntime> {
+pub(super) struct ClientStream {
     #[pin]
     pub(super) receiver: Receiver<Vec<u8>>,
     pub(super) guard: TeardownGuard,
-    pub(super) manager: Arc<ConnectionManager<R>>,
+    pub(super) manager: Arc<ConnectionManager>,
     pub(super) stream_id: StreamID,
     pub(super) state: ClientStreamState,
 }
@@ -143,7 +144,7 @@ pub(super) enum ClientStreamState {
     Done,
 }
 
-impl<R: AsyncRuntime> Stream for ClientStream<R> {
+impl Stream for ClientStream {
     type Item = Vec<u8>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let stream = self.project();
@@ -205,7 +206,7 @@ impl<R: AsyncRuntime> Stream for ClientStream<R> {
 }
 
 #[pinned_drop]
-impl<R: AsyncRuntime> PinnedDrop for ClientStream<R> {
+impl PinnedDrop for ClientStream {
     fn drop(self: Pin<&mut Self>) {
         self.manager.spawn_send(Message::Stream {
             stream_id: self.stream_id,
@@ -218,15 +219,15 @@ impl<R: AsyncRuntime> PinnedDrop for ClientStream<R> {
 ///
 /// Will automatically cancel server handling if the future is dropped before resolving
 #[pin_project(PinnedDrop)]
-struct CancellableFuture<F: FusedFuture, R: AsyncRuntime> {
+struct CancellableFuture<F: FusedFuture> {
     #[pin]
     future: F,
-    manager: Arc<ConnectionManager<R>>,
+    manager: Arc<ConnectionManager>,
     request_id: RequestID,
     _guard: TeardownGuard,
 }
 
-impl<F: FusedFuture, R: AsyncRuntime> Future for CancellableFuture<F, R> {
+impl<F: FusedFuture> Future for CancellableFuture<F> {
     type Output = F::Output;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.project().future.poll(cx)
@@ -234,7 +235,7 @@ impl<F: FusedFuture, R: AsyncRuntime> Future for CancellableFuture<F, R> {
 }
 
 #[pinned_drop]
-impl<F: FusedFuture, R: AsyncRuntime> PinnedDrop for CancellableFuture<F, R> {
+impl<F: FusedFuture> PinnedDrop for CancellableFuture<F> {
     fn drop(self: Pin<&mut Self>) {
         if self.future.is_terminated() {
             return;
@@ -248,13 +249,12 @@ impl<F: FusedFuture, R: AsyncRuntime> PinnedDrop for CancellableFuture<F, R> {
 /// A future which fetches a response for a client
 ///
 /// Timeout can be modified using [`timeout`](Self::timeout) or [`no_timeout`](Self::no_timeout)
-pub struct ClientResponseFuture<F, R: AsyncRuntime> {
+pub struct ClientResponseFuture<F> {
     future: F,
     timeout: Option<Duration>,
-    runtime: R,
 }
 
-impl<F, R: AsyncRuntime> ClientResponseFuture<F, R> {
+impl<F> ClientResponseFuture<F> {
     /// Set the timeout for making this request call
     #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
@@ -270,23 +270,23 @@ impl<F, R: AsyncRuntime> ClientResponseFuture<F, R> {
     }
 }
 
-impl<T, F: Future<Output = Result<T, ClientError>>, R: AsyncRuntime> IntoFuture
-    for ClientResponseFuture<F, R>
+impl<T, F: Future<Output = Result<T, ClientError>>> IntoFuture
+    for ClientResponseFuture<F>
 {
     type Output = Result<T, ClientError>;
     type IntoFuture = Either<
         F,
         Map<
-            Select<Pin<Box<F>>, R::SleepFuture>,
-            fn(<Select<Pin<Box<F>>, R::SleepFuture> as Future>::Output) -> Result<T, ClientError>,
+            Select<Pin<Box<F>>, Delay>,
+            fn(<Select<Pin<Box<F>>, Delay> as Future>::Output) -> Result<T, ClientError>,
         >,
     >;
 
     fn into_future(self) -> Self::IntoFuture {
         if let Some(timeout) = self.timeout {
             Either::Right(
-                select(Box::pin(self.future), self.runtime.sleep(timeout))
-                    .map(inline_timeout::<T, R::SleepFuture, F>),
+                select(Box::pin(self.future), Delay::new(timeout))
+                    .map(inline_timeout::<T, Delay, F>),
             )
         } else {
             Either::Left(self.future)

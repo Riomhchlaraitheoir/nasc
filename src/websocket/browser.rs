@@ -1,11 +1,10 @@
 //! Defines a websocket client
 
 use crate::__macros::imports::Sink;
-use crate::connection::client::Client;
 use crate::connection::sink_stream::SinkStreamConn;
 use crate::connection::{new_client_conn, Connection, ConnectionOptions};
-use crate::format::IsFormat;
-use crate::{PROTOCOL_VERSION, PROTOCOL_NAME};
+use crate::format::Format;
+use crate::{PROTOCOL_VERSION, PROTOCOL_NAME, Service};
 use crate::runtime::BrowserRuntime;
 use futures::channel::oneshot;
 use futures::{SinkExt, StreamExt};
@@ -27,12 +26,12 @@ pub enum WebsocketError {
 ///
 /// # Errors
 /// Returns an error if an error occurs while establishing a connection
-pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + 'static>(
+pub async fn new_websocket_transport<S: Service, F: Format>(
     url: impl AsRef<str>,
-    format: Format,
-    on_close: OnClose,
+    format: F,
+    on_close: impl FnOnce() + 'static,
     options: ConnectionOptions
-) -> Result<Client<BrowserRuntime>, WebsocketError> {
+) -> Result<S::Client<F>, WebsocketError> {
     debug!("Connecting websocket to {}", url.as_ref());
     let protocol = format!("{PROTOCOL_NAME}.{PROTOCOL_VERSION}.{}", format.subprotocol());
     let websocket = WebSocket::open_with_protocol(url.as_ref(), &protocol)
@@ -68,6 +67,7 @@ pub async fn new_websocket_transport<Format: IsFormat, OnClose: FnOnce() + 'stat
         on_close();
     });
 
-    Ok(client_ready.1.await.expect("client failed to start"))
+    let client = client_ready.1.await.expect("client failed to start");
+    Ok(S::client(client, format))
 }
 
