@@ -50,9 +50,9 @@ macro_rules! __generate_service {
             name = $method_name:ident,
             args = [$({
                 name = $arg_name:ident,
-                user = ($($arg_type:tt)*),
+                user = $arg_type:tt,
             })*],
-            return_type = ($($return_type:tt)*),
+            return_type = $return_type:tt,
             streamed_in = [$($streamed_in:ty),*],
             streamed_out = [$($streamed_out:ty),*],
             services_in = [$($services_in:ty),*],
@@ -127,7 +127,7 @@ where
 {
     $(
     $(#[doc = $method_docs])*
-    fn $method_name(&self, $($arg_name: __for_special_types!(server_input_type(format: _Format), $($arg_type)*)),*) -> impl Future<Output=__for_special_types!(server_return_type(format: _Format), $($return_type)*)> + Send;
+    fn $method_name(&self, $($arg_name: __for_special_types!(server_input_type(format: _Format), $arg_type)),*) -> impl Future<Output=__for_special_types!(server_return_type(format: _Format), $return_type)> + Send;
     )*
 }
 
@@ -143,8 +143,8 @@ impl<_Server, _Format, $($generics,)*> Handler for [<$name Handler>]<_Server, _F
 where
     ():Sized,
     _Server: [<$name Server>]<_Format, $($generics,)*>,
-    $(_Format: ReadFormat<($(__for_special_types!(to_transport_type(), $($arg_type)*),)*)>,)*
-    $(_Format: WriteFormat<__for_special_types!(to_transport_type(), $($return_type)*)>,)*
+    $(_Format: ReadFormat<($(__for_special_types!(to_transport_type(), $arg_type),)*)>,)*
+    $(_Format: WriteFormat<__for_special_types!(to_transport_type(), $return_type)>,)*
     $($(_Format: ReadFormat<$streamed_in>,)*)*
     $($(_Format: WriteFormat<$streamed_out>,)*)*
     $($($streamed_in: Sync,)*)*
@@ -163,12 +163,12 @@ where
         match method_id.value() {
             $(
             $method_id => {
-                let ($($arg_name,)*): ($(__for_special_types!(to_transport_type(), $($arg_type)*),)*) = self.format.read(&request).map_err(|error| {
+                let ($($arg_name,)*): ($(__for_special_types!(to_transport_type(), $arg_type),)*) = self.format.read(&request).map_err(|error| {
                     HandleError::BadPayloadFormat(error.to_string())
                 })?;
-                $(let $arg_name = __for_special_values!($arg_name, incoming_values((manager: manager, format: self.format, guard: guard)), $($arg_type)*);)*
+                $(let $arg_name = __for_special_values!($arg_name, incoming_values(manager: manager, format: self.format, guard: guard), $arg_type);)*
                 let value = self.server.$method_name($($arg_name),*).await;
-                let value = __for_special_values!(value, outgoing_values((manager: manager, format: self.format, guard: guard)), $($return_type)*);
+                let value = __for_special_values!(value, outgoing_values(manager: manager, format: self.format, guard: guard), $return_type);
                 self.format.write(value).map_err(|error| {
                     HandleError::InternalError(format!("Error writing response: {}", error))
                 })
@@ -187,7 +187,7 @@ pub trait [<$name Client>]<$($generics),*>: Send + Sync where ():Sized, $($where
     /// Returns a future builder that allows certain options to be set before `await`-ing
     ///
     /// see [`ClientResponseFuture`]
-    fn $method_name(&self, $($arg_name: __for_special_types!(client_input_type(format: Self::Format), $($arg_type)*)),*) -> ClientResponseFuture<impl Future<Output=Result<__for_special_types!(client_return_type(format: Self::Format), $($return_type)*), ClientError>> + Send>;
+    fn $method_name(&self, $($arg_name: __for_special_types!(client_input_type(format: Self::Format), $arg_type)),*) -> ClientResponseFuture<impl Future<Output=Result<__for_special_types!(client_return_type(format: Self::Format), $return_type), ClientError>> + Send>;
     )*
 }
 
@@ -205,8 +205,8 @@ $(#[doc = $docs])*
 ///  The return value is always wrapped in a result: `Result<T, ClientError<_Conn::SendError>>` where `T` is the service return value
 impl<_Format, $($generics),*> [<$name Client>]<$($generics)*> for [<$name Client Impl>]<_Format, $($generics),*>
 where
-    $(_Format: WriteFormat<($(__for_special_types!(to_transport_type(), $($arg_type)*),)*)>,)*
-    $(_Format: ReadFormat<__for_special_types!(to_transport_type(), $($return_type)*)>,)*
+    $(_Format: WriteFormat<($(__for_special_types!(to_transport_type(), $arg_type),)*)>,)*
+    $(_Format: ReadFormat<__for_special_types!(to_transport_type(), $return_type)>,)*
     $($(_Format: ReadFormat<$streamed_out>,)*)*
     $($(_Format: WriteFormat<$streamed_in>,)*)*
     $($($streamed_in: Sync,)*)*
@@ -217,13 +217,13 @@ where
 
     $(
     $(#[doc = $method_docs])*
-    fn $method_name(&self, $($arg_name: __for_special_types!(client_input_type(format: _Format), $($arg_type)*)),*) -> ClientResponseFuture<impl Future<Output=Result<__for_special_types!(client_return_type(format: _Format), $($return_type)*), ClientError>> + Send> {
+    fn $method_name(&self, $($arg_name: __for_special_types!(client_input_type(format: _Format), $arg_type)),*) -> ClientResponseFuture<impl Future<Output=Result<__for_special_types!(client_return_type(format: _Format), $return_type), ClientError>> + Send> {
         let request = {
             let format = self.format.clone();
             let manager = self.client.service_manager();
             let guard = self.client.guard.clone();
             async move {
-                $(let $arg_name = __for_special_values!($arg_name, outgoing_values((manager: manager, format: format, guard: guard)), $($arg_type)*);)*
+                $(let $arg_name = __for_special_values!($arg_name, outgoing_values(manager: manager, format: format, guard: guard), $arg_type);)*
                 format.write(($($arg_name,)*)).map_err(ClientError::Serialise)
             }
         };
@@ -232,8 +232,8 @@ where
             let manager = self.client.service_manager();
             let guard = self.client.guard.clone();
             async move |response: Vec<u8>| -> Result<_, ClientError> {
-                let value: __for_special_types!(to_transport_type(), $($return_type)*) = format.read(&response).map_err(ClientError::Deserialise)?;
-                let value = __for_special_values!(value, incoming_values((manager: manager, format: format, guard: guard)), $($return_type)*);
+                let value: __for_special_types!(to_transport_type(), $return_type) = format.read(&response).map_err(ClientError::Deserialise)?;
+                let value = __for_special_values!(value, incoming_values(manager: manager, format: format, guard: guard), $return_type);
                 Ok(value)
             }
         };
@@ -251,55 +251,46 @@ where
 #[macro_export]
 macro_rules! __for_special_types {
     // tuple
-    ($mode:ident $args:tt, ()) => {
-        ()
+    ($mode:ident $args:tt, (normal: $ty:ty)) => {
+        $ty
     };
-    ($mode:ident $args:tt, ($ty:ty)) => {
-        ($crate::__for_special_types!($mode($args), $ty))
+    ($mode:ident $args:tt, (tuple: $($name:ident: $ty:tt),*)) => {
+        ($($crate::__for_special_types!($mode $args, $ty)),*)
     };
-    ($mode:ident $args:tt, ($($t:ty),*$(,)?)) => {
-        ($($crate::__for_special_types!($mode($args), $t)),*)
+    ($mode:ident $args:tt, (result: $ok:tt, $err:tt)) => {
+        Result<$crate::__for_special_types!($mode $args, $ok), $crate::__for_special_types!($mode $args, $err)>
     };
-    ($mode:ident $args:tt, Result<$ok:ty, $err:ty>) => {
-        Result<$crate::__for_special_types!($mode($args), $ok), $crate::__for_special_types!($mode($args), $err)>
+    ($mode:ident $args:tt, (option: $ty:tt)) => {
+        Option<$crate::__for_special_types!($mode $args, $ty)>
     };
-    ($mode:ident $args:tt, Option<$ty:ty>) => {
-        Option<$crate::__for_special_types!($mode($args), $ty)>
-    };
-    ($mode:ident $args:tt, impl $($(::)?futures::stream::)?Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
-        $crate::__for_special_types!($mode: stream<$item>, $args)
-    };
-    ($mode:ident $args:tt, impl Service<$service:ty>) => {
-        $crate::__for_special_types!($mode: service<$service>, $args)
-    };
-    (to_transport_type: stream<$item:ty>, ()) => {
+    (to_transport_type(), (stream: $item:ty)) => {
         u32
     };
-    (to_transport_type: service<$service:ty>, ()) => {
+    (to_transport_type(), (service: $service:ty)) => {
         u32
     };
-    (client_input_type: stream<$item:ty>, (format: $format:ty)) => {
+    (client_input_type(format: $format:ty), (stream: $item:ty)) => {
         impl Stream<Item = $item> + Send + 'static
     };
-    (client_input_type: service<$service:ty>, (format: $format:ty)) => {
+    (client_input_type(format: $format:ty), (service: $service:ty)) => {
         impl IntoHandler<$service, $format>
     };
-    (client_return_type: stream<$item:ty>, (format: $format:ty)) => {
+    (client_return_type(format: $format:ty), (stream: $item:ty)) => {
         impl Stream<Item=$item>
     };
-    (client_return_type: service<$service:ty>, (format: $format:ty)) => {
+    (client_return_type(format: $format:ty), (service: $service:ty)) => {
         <$service as Service>::Client<$format>
     };
-    (server_return_type: stream<$item:ty>, (format: $format:ty)) => {
+    (server_return_type(format: $format:ty), (stream: $item:ty)) => {
         impl Stream<Item = $item> + Send + 'static
     };
-    (server_return_type: service<$service:ty>, (format: $format:ty)) => {
+    (server_return_type(format: $format:ty), (service: $service:ty)) => {
         impl IntoHandler<$service, $format>
     };
-    (server_input_type: stream<$item:ty>, (format: $format:ty)) => {
+    (server_input_type(format: $format:ty), (stream: $item:ty)) => {
         impl Stream<Item = $item> + Send + 'static
     };
-    (server_input_type: service<$service:ty>, (format: $format:ty)) => {
+    (server_input_type(format: $format:ty), (service: $service:ty)) => {
         <$service as Service>::Client<$format>
     };
     ($mode:ident: $($t:tt)*) => {
@@ -317,47 +308,32 @@ macro_rules! __for_special_types {
 #[macro_export]
 macro_rules! __for_special_values {
     // tuple
-    ($value:ident, $mode:ident($args:tt), ($($t:ty),*$(,)?)) => {
-        $crate::__for_special_values!(tuple: $value, $mode($args), ($($t,)*))
-    };
-    (tuple: $value:ident, $mode:ident($args:tt), ($($t:ty,)*)) => {
-        $crate::__for_special_values!(named_tuple: $value, $mode($args), a, ($($t,)*))
-    };
-    (named_tuple: $value:ident, $mode:ident($args:tt), $i:tt, ($(#$name:tt: $named:ty,)*$t:ty,$($unnamed:ty,)*)) => {
-        $crate::__for_special_values!(named_tuple: $value, $mode($args), [<$i a>], ($(#$name: $named,)* #$i: $t, $($unnamed,)*))
-    };
-    (named_tuple: $value:ident, $mode:ident($args:tt), $_:tt, ($(#$name:tt: $t:ty,)*)) => {{
+    ($value:ident, $mode:ident $args:tt, (tuple: $($name:ident: $ty:tt),*)) => {{
         let ($($name,)*) = $value;
         $(
-        let $name = $crate::__for_special_values!($name, $mode($args), $t);
+        let $name = $crate::__for_special_values!($name, $mode $args, $ty);
         )*
         ($($name,)*)
     }};
-    ($value:ident, $mode:ident($args:tt), Result<$ok:ty, $err:ty>) => {
+    ($value:ident, $mode:ident $args:tt, (result: $ok:tt, $err:tt)) => {
         match $value {
             Ok($value) => {
-                Ok($crate::__for_special_values!($value, $mode($args), $ok))
+                Ok($crate::__for_special_values!($value, $mode $args, $ok))
             },
             Err($value) => {
-                Err($crate::__for_special_values!($value, $mode($args), $err))
+                Err($crate::__for_special_values!($value, $mode $args, $err))
             },
         }
     };
-    ($value:ident, $mode:ident($args:tt), Option<$ty:ty>) => {
+    ($value:ident, $mode:ident $args:tt, (option: $ty:tt)) => {
         match $value {
             Some($value) => {
-                Some($crate::__for_special_values!($value, $mode($args), $ty))
+                Some($crate::__for_special_values!($value, $mode $args, $ty))
             },
             None => None
         }
     };
-    ($value:ident, $mode:ident($args:tt), impl $($(::)?futures::stream::)?Stream<Item = $item:ty> $($additional_bounds:tt)*) => {
-        $crate::__for_special_values!($mode: stream<$item>: $value, $args)
-    };
-    ($value:ident, $mode:ident($args:tt), impl Service<$service:ty$([$($generics:tt)*])?>) => {
-        $crate::__for_special_values!($mode: service<$service>: $value, $args)
-    };
-    (outgoing_values: stream<$item:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{
+    ($value:ident, outgoing_values(manager: $manager:expr, format: $format:expr, guard: $guard:expr), (stream: $item:ty)) => {{
         let format = $format.clone();
         use $crate::__macros::imports::StreamExt;
         let $value = StreamExt::filter_map($value, move |item|{
@@ -375,12 +351,12 @@ macro_rules! __for_special_values {
         let id: u32 = $manager.outgoing_stream($value, $guard.clone()).await.into();
         id
     }};
-    (outgoing_values: service<$service:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{
+    ($value:ident, outgoing_values(manager: $manager:expr, format: $format:expr, guard: $guard:expr), (service: $service:ty)) => {{
         let $value = $value.into_handler($format.clone());
         let id: u32 = $manager.outgoing_service($value, $guard.clone()).await.into();
         id
     }};
-    (incoming_values: stream<$item:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{
+    ($value:ident, incoming_values(manager: $manager:expr, format: $format:expr, guard: $guard:expr), (stream: $item:ty)) => {{
         let format = $format.clone();
         use $crate::__macros::imports::StreamExt;
         StreamExt::filter_map($manager.incoming_stream(StreamID::from($value), $guard.clone()).await, move |bytes| {
@@ -396,16 +372,13 @@ macro_rules! __for_special_values {
             }
         })
     }};
-    (incoming_values: service<$service:ty>: $value:ident, (manager: $manager:expr, format: $format:expr, guard: $guard:expr)) => {{
+    ($value:ident, incoming_values(manager: $manager:expr, format: $format:expr, guard: $guard:expr), (service: $service:ty)) => {{
         $manager.incoming_service::<$service, _>(ServiceID::from($value), $guard.clone(), $format.clone()).await
     }};
-    ($mode:ident: $($t:tt)*) => {
-        compile_error!(concat!("Internal Error!: unexpected __for_special_values mode: ", stringify!($mode)))
-    };
-    ($value:ident, $mode:ident($args:tt), impl $($unexpected:tt)*) => {
-        compile_error!(concat!("unexpected impl argument: impl ", stringify!($($unexpected)*)));
-    };
-    ($value:ident, $mode:ident($args:tt), $other:ty) => {
+    ($value:ident, $mode:ident $args:tt, (normal: $ty:ty)) => {
         $value
     };
+    ($($token:tt)*) => {
+        compile_error!(concat!("unexpected input: ", stringify!($($token)*)))
+    }
 }

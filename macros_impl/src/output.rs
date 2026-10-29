@@ -1,6 +1,6 @@
 use crate::{Method, Param, Service};
 use proc_macro2::{Ident, TokenStream};
-use quote::{ToTokens, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::{Expr, ExprLit, Lit, LitInt};
 
 impl ToTokens for Service {
@@ -41,16 +41,13 @@ impl ToTokens for Method {
         };
         let name = &self.name;
         let args = self.args.iter().map(|(name, param)| {
-            let user = param.normal();
+            let user = param.output();
             quote! {{
                 name = #name,
-                user = (#user),
+                user = #user,
             }}
         });
-        let return_type = {
-            let user = self.ret.normal();
-            quote!((#user))
-        };
+        let return_type = self.ret.output();
 
         let streamed_in = self
             .args
@@ -95,29 +92,33 @@ fn generate_id(name: &Ident) -> Expr {
 }
 
 impl Param {
-    fn normal(&self) -> TokenStream {
+    fn output(&self) -> TokenStream {
         match self {
-            Self::Simple(ty) => ty.to_token_stream(),
+            Self::Simple(ty) => quote!((normal: #ty)),
             Self::Stream(ty) => {
                 let ty = ty.to_token_stream();
-                quote! { impl futures::stream::Stream<Item=#ty> }
+                quote!((stream: #ty))
             }
             Self::Service(ty) => {
                 let ty = ty.to_token_stream();
-                quote! { impl Service<#ty> }
+                quote!((service: #ty))
             }
             Self::Option(param) => {
-                let param = param.normal();
-                quote! { Option<#param> }
+                let param = param.output();
+                quote!((option: #param))
             }
             Self::Result(ok, err) => {
-                let ok = ok.normal();
-                let err = err.normal();
-                quote! { Result<#ok, #err> }
+                let ok = ok.output();
+                let err = err.output();
+                quote!((result: #ok, #err))
             }
             Self::Tuple(params) => {
-                let params = params.iter().map(Self::normal);
-                quote! { ( #(#params,)* ) }
+                let params = params.iter().enumerate().map(|(i, p)| {
+                    let name = format_ident!("_{i}");
+                    let param = p.output();
+                    quote!(#name: #param)
+                });
+                quote!((tuple: #(#params),*))
             }
         }
     }
