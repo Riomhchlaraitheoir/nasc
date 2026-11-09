@@ -7,7 +7,7 @@ use std::error::Error;
 
 const CONTENT_TYPE: &str = "application/cbor";
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 /// [Concise Binary Object Representation](https://cbor.io/)
 pub struct Cbor;
 

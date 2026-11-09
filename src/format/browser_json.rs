@@ -18,7 +18,7 @@ thread_local! {
     });
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 /// [JavaScript Object Notation](https://www.json.org/)
 pub struct BrowserJson;
 

@@ -7,7 +7,7 @@ use std::error::Error;
 
 const CONTENT_TYPE: &str = "application/json";
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 /// [JavaScript Object Notation](https://www.json.org/)
 pub struct Json;
 

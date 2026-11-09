@@ -10,12 +10,14 @@ use futures::future::{BoxFuture, Either, FusedFuture, Map, Select, select};
 use futures::{FutureExt, Stream};
 use pin_project::{pin_project, pinned_drop};
 use std::error::Error;
+use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
+use futures::stream::FusedStream;
 use futures_timer::Delay;
 use thiserror::Error;
 use tracing::error;
@@ -31,6 +33,35 @@ pub struct Client<S: Service> {
     pub guard: TeardownGuard,
     pub(super) default_timeout: Option<Duration>,
     pub(crate) _service: PhantomData<S>,
+}
+
+impl<S: Service> Debug for Client<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("manager", &Arc::as_ptr(&self.manager))
+            .field("service_id", &self.service_id)
+            .field("default_timeout", &self.default_timeout)
+            .finish()
+    }
+}
+
+impl<S: Service> PartialEq for Client<S> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.manager, &other.manager) &&
+            self.service_id == other.service_id
+    }
+}
+
+impl<S: Service> Clone for Client<S> {
+    fn clone(&self) -> Self {
+        Self {
+            manager: self.manager.clone(),
+            service_id: self.service_id,
+            guard: self.guard.clone(),
+            default_timeout: self.default_timeout,
+            _service: PhantomData,
+        }
+    }
 }
 
 impl<S: Service> Client<S> {
@@ -147,6 +178,9 @@ pub(super) enum ClientStreamState {
 impl Stream for ClientStream {
     type Item = Vec<u8>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.is_terminated() {
+            return Poll::Ready(None);
+        }
         let stream = self.project();
         let state = mem::replace(stream.state, ClientStreamState::Waiting);
         let mut send = match state {
@@ -202,6 +236,12 @@ impl Stream for ClientStream {
                 Poll::Pending
             }
         }
+    }
+}
+
+impl FusedStream for ClientStream {
+    fn is_terminated(&self) -> bool {
+        matches!(self.state, ClientStreamState::Done)
     }
 }
 

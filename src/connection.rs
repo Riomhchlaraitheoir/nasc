@@ -19,7 +19,7 @@ use bon::Builder;
 use derive_more::Display;
 use futures::channel::oneshot;
 use futures::future::{AbortHandle, Abortable, FusedFuture};
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream, FusedStream};
 use futures::{FutureExt, StreamExt};
 use log::warn;
 use std::fmt::{Debug, Display};
@@ -391,7 +391,7 @@ impl ServiceManager {
         &self,
         stream_id: StreamID,
         guard: TeardownGuard,
-    ) -> impl Stream<Item = Vec<u8>> + Send + 'static + use<> {
+    ) -> impl FusedStream<Item = Vec<u8>> + Send + 'static + use<> {
         debug!("Received incoming stream {stream_id}");
         let (sender, receiver) = bounded(10);
         self.0.incoming_streams.insert(stream_id, sender).await;

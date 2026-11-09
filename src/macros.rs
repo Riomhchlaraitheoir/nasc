@@ -64,6 +64,7 @@ $crate::__macros::imports::paste!{
 $vis use [<$name Module>]::{
     [<$name>],
     [<$name Client>],
+    [<$name ClientImpl>],
     [<$name Server>]
 };
 
@@ -90,7 +91,7 @@ impl<$($generics),*> $crate::Service for $name<$($generics),*> where (): Sized, 
     type Client<_Format: Format> = [<$name ClientImpl>]<_Format, $($generics),*>;
 
     fn client<_Format: Format>(client: Client<Self>, format: _Format) -> Self::Client<_Format> {
-        [<$name Client Impl>] {
+        [<$name ClientImpl>] {
             client,
             format,
             _phantom: PhantomData::<fn() -> ($($generics,)*)>
@@ -191,7 +192,8 @@ pub trait [<$name Client>]<$($generics),*>: Send + Sync where ():Sized, $($where
     )*
 }
 
-pub struct [<$name Client Impl>]<_Format, $($generics: 'static),*> where ():Sized, $($where_bounds)* {
+#[derive(Debug, Clone, PartialEq)]
+pub struct [<$name ClientImpl>]<_Format, $($generics: 'static),*> where ():Sized, $($where_bounds)* {
     client: Client<$name<$($generics),*>>,
     format: _Format,
     _phantom: PhantomData<fn() -> ($($generics,)*)>
@@ -203,7 +205,7 @@ $(#[doc = $docs])*
 /// and sends the requests with the given [client](Client) before returning the response
 ///
 ///  The return value is always wrapped in a result: `Result<T, ClientError<_Conn::SendError>>` where `T` is the service return value
-impl<_Format, $($generics),*> [<$name Client>]<$($generics)*> for [<$name Client Impl>]<_Format, $($generics),*>
+impl<_Format, $($generics),*> [<$name Client>]<$($generics)*> for [<$name ClientImpl>]<_Format, $($generics),*>
 where
     $(_Format: WriteFormat<($(__for_special_types!(to_transport_type(), $arg_type),)*)>,)*
     $(_Format: ReadFormat<__for_special_types!(to_transport_type(), $return_type)>,)*

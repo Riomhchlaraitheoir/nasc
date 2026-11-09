@@ -12,7 +12,7 @@ compile_error!("browser-json is only available on wasm32 arch");
 pub mod cbor;
 
 /// This specifies types which represent formats, but does not prescribe supporting any particular type
-pub trait Format: Clone + Send + Sync + 'static {
+pub trait Format: Clone + PartialEq + Eq + Send + Sync + 'static {
     /// The HTTP content-type related to this format
     fn content_type(&self) -> &'static str;
 
@@ -34,7 +34,7 @@ pub trait WriteFormat<Write>: Send + Sync + Format {
 
 #[doc(hidden)]
 #[allow(missing_docs, reason = "Variants are self documenting")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EitherFormat<A, B> {
     Left(A),
     Right(B),
