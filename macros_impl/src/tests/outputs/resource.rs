@@ -507,7 +507,7 @@ mod resource_service {
         fn updates(
             &self,
         ) -> imports::ClientResponseFuture<
-            impl imports::Future<Output = Result<impl imports::Stream<Item = T>, imports::ClientError>>
+            impl imports::Future<Output = Result<impl imports::Stream<Item = T> + Send + 'static, imports::ClientError>>
             + Send,
         >;
         #[doc = r""]

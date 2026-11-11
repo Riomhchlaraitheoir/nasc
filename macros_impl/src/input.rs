@@ -62,7 +62,7 @@ impl Param {
                     _ => None
                 }).collect();
                 if let Some(types) = types {
-                    *self = Self::Simple(parse_quote!((#(#types)*)));
+                    *self = Self::Simple(parse_quote!((#(#types),*)));
                 }
             }
         }

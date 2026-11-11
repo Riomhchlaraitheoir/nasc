@@ -208,7 +208,7 @@ impl input::Param {
                 server_input: quote!(impl imports::Stream<Item = #item> + Send + 'static),
                 server_output: quote!(impl imports::Stream<Item = #item> + Send + 'static),
                 client_input: quote!(impl imports::Stream<Item = #item> + Send + 'static),
-                client_output: quote!(impl imports::Stream<Item=#item>),
+                client_output: quote!(impl imports::Stream<Item=#item> + Send + 'static),
                 stream_items: vec![item.to_token_stream()],
             },
             Self::Service(service) => Param {
