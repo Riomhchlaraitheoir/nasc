@@ -24,6 +24,7 @@ pub trait ResourcesService {
 #[service]
 pub trait ResourceService<T: Resource> {
     fn subscribe(listener: impl Service<Subscriber<T>>);
+    fn updates() ->impl Stream<Item=T>;
     fn list() -> Vec<T>;
     fn get(id: u64) -> Option<T>;
     fn new(value: T);
@@ -35,3 +36,5 @@ pub trait Subscriber<T: Resource> {
     fn updated(value: T);
     fn new(value: T);
 }
+
+// include!("../../macros_impl/src/tests/outputs/resource.rs");

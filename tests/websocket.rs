@@ -18,7 +18,6 @@ use nasc::connection::ConnectionOptions;
 use nasc::format::json::Json;
 use nasc::websocket::axum::{WebsocketError, handle_websocket};
 use nasc::websocket::tokio_tungstenite::new_websocket_transport;
-use crate::ServiceModule::ServiceClientImpl;
 
 #[service]
 trait Service {
@@ -94,7 +93,7 @@ async fn handle(server: ServiceImpl, websocket: WebSocketUpgrade) -> impl IntoRe
 async fn websocket_test() {
     use futures::FutureExt;
     simple_logger::init_with_level(Level::Info).unwrap();
-    println!("Starting test");
+    println!("Starting tests");
 
     let (stop_server, shutdown_signal) = oneshot::channel::<()>();
     let state = Arc::<RwLock<ServerState>>::default();
@@ -129,10 +128,10 @@ async fn websocket_test() {
                     .await
                     .is_ok()
                 {
-                    info!("test {i} complete");
+                    info!("tests {i} complete");
                 } else {
                     pass = false;
-                    info!("test {i} timed out");
+                    info!("tests {i} timed out");
                 }
             }
             assert!(pass, "Tests did not complete successfully");

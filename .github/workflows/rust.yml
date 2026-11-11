@@ -31,11 +31,11 @@ jobs:
     - name: Run clippy for macros
       run: cargo clippy --all-targets --package nasc-macros-impl -- -Dwarnings
     - name: Run tests for macros
-      run: cargo test --all-targets --package nasc-macros-impl
+      run: cargo tests --all-targets --package nasc-macros-impl
     - name: Run Clippy
       run: cargo clippy --all-targets --features __test -- -Dwarnings
     - name: Run Clippy for WASM target
       run: cargo clippy --all-targets --features __wasm_test --target wasm32-unknown-unknown -- -Dwarnings
     - name: Run tests
-      run: cargo test --all-targets --verbose --features __test
+      run: cargo tests --all-targets --verbose --features __test
       

@@ -1,4 +1,4 @@
-use macros::service;
+use nasc::service;
 
 #[allow(dead_code, reason = "only an example")]
 pub struct AuthToken(String);
@@ -13,6 +13,8 @@ trait PublicApi {
 trait AuthApi {
     fn private_fn();
 }
+
+// include!("../macros_impl/src/tests/outputs/auth.rs");
 
 fn main() {
 

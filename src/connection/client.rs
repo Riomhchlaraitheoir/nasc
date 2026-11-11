@@ -35,6 +35,7 @@ pub struct Client<S: Service> {
     pub(crate) _service: PhantomData<S>,
 }
 
+#[allow(clippy::missing_fields_in_debug, reason = "Some fields are unrepresentable in debug, and are not really needed either")]
 impl<S: Service> Debug for Client<S> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")

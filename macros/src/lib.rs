@@ -13,3 +13,13 @@ pub fn service(args: TokenStream, input: TokenStream) -> TokenStream {
         Err(err) => err.to_compile_error(),
     }.into()
 }
+
+#[proc_macro]
+pub fn method_id(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input);
+
+    match macros_impl::method_id(input) {
+        Ok(tokens) => tokens.into_token_stream(),
+        Err(err) => err.to_compile_error(),
+    }.into()
+}

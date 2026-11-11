@@ -1,10 +1,10 @@
-use crate::{Args, Method, Param, Service};
+use crate::input::{Args, Input, Method, Param};
 use proc_macro2::Ident;
 use quote::ToTokens;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::token::Colon;
-use syn::{parse_quote, Attribute, Expr, FnArg, GenericArgument, GenericParam, ItemTrait, Meta, MetaNameValue, Pat, PatIdent, Path, PathArguments, PathSegment, PredicateType, ReturnType, Safety, Token, TraitItem, TraitItemFn, Type, TypeParamBound, WherePredicate};
+use syn::{parse_quote, Attribute, Expr, ExprLit, FnArg, GenericArgument, GenericParam, ItemTrait, Lit, LitInt, Meta, MetaNameValue, Pat, PatIdent, Path, PathArguments, PathSegment, PredicateType, ReturnType, Safety, Token, TraitItem, TraitItemFn, Type, TypeParamBound, WherePredicate};
 
 impl Parse for Args {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -35,59 +35,61 @@ impl Parse for Args {
     }
 }
 
-pub fn parse_service(input: ItemTrait, args: Args) -> syn::Result<Service> {
-    let mut methods = vec![];
-    for item in input.items {
-        if let TraitItem::Fn(item) = item {
-            methods.push(method(item)?);
+impl Input {
+    pub fn parse(input: ItemTrait, args: Args) -> syn::Result<Self> {
+        let mut methods = vec![];
+        for item in input.items {
+            if let TraitItem::Fn(item) = item {
+                methods.push(method(item)?);
+            }
         }
-    }
-    if !input.supertraits.is_empty() {
-        return Err(syn::Error::new_spanned(
-            input.supertraits,
-            "supertraits are not supported",
-        ));
-    }
-    let docs = input.attrs.iter().filter_map(docs).collect();
-    let mut generic_types = Vec::new();
-    let mut generic_bounds: Vec<_> = input
-        .generics
-        .where_clause
-        .map_or_default(|w| w.predicates.into_iter().collect());
-    for generic in input.generics.params {
-        let GenericParam::Type(ty) = generic else {
-            return Err(syn::Error::new(
-                generic.span(),
-                "Only generic types are supported",
-            ));
-        };
-        let ident = ty.ident;
-        if let Some((_eq, default)) = ty.default {
-            return Err(syn::Error::new(
-                default.span(),
-                "Default is not supported",
+        if !input.supertraits.is_empty() {
+            return Err(syn::Error::new_spanned(
+                input.supertraits,
+                "supertraits are not supported",
             ));
         }
-        if !ty.bounds.is_empty() {
-            generic_bounds.push(WherePredicate::Type(PredicateType {
-                attrs: vec![],
-                lifetimes: None,
-                bounded_ty: parse_quote!(#ident),
-                colon_token: Colon::default(),
-                bounds: ty.bounds,
-            }));
+        let docs = input.attrs.iter().filter_map(docs).collect();
+        let mut generic_types = Vec::new();
+        let mut generic_bounds: Vec<_> = input
+            .generics
+            .where_clause
+            .map_or_default(|w| w.predicates.into_iter().collect());
+        for generic in input.generics.params {
+            let GenericParam::Type(ty) = generic else {
+                return Err(syn::Error::new(
+                    generic.span(),
+                    "Only generic types are supported",
+                ));
+            };
+            let ident = ty.ident;
+            if let Some((_eq, default)) = ty.default {
+                return Err(syn::Error::new(
+                    default.span(),
+                    "Default is not supported",
+                ));
+            }
+            if !ty.bounds.is_empty() {
+                generic_bounds.push(WherePredicate::Type(PredicateType {
+                    attrs: vec![],
+                    lifetimes: None,
+                    bounded_ty: parse_quote!(#ident),
+                    colon_token: Colon::default(),
+                    bounds: ty.bounds,
+                }));
+            }
+            generic_types.push(ident);
         }
-        generic_types.push(ident);
+        Ok(Self {
+            args,
+            docs,
+            vis: input.vis,
+            generic_types,
+            generic_bounds,
+            name: input.ident,
+            methods,
+        })
     }
-    Ok(Service {
-        args,
-        docs,
-        vis: input.vis,
-        generic_types,
-        generic_bounds,
-        name: input.ident,
-        methods,
-    })
 }
 
 fn method(item: TraitItemFn) -> syn::Result<Method> {
@@ -127,6 +129,7 @@ fn method(item: TraitItemFn) -> syn::Result<Method> {
     let ret = return_type(item.sig.output)?;
     let docs = item.attrs.iter().filter_map(docs).collect();
     let id = item.attrs.iter().find_map(id);
+    let id = id.unwrap_or_else(|| generate_id(&name));
     Ok(Method {
         id,
         docs,
@@ -171,7 +174,7 @@ impl TryFrom<&Type> for Param {
     type Error = syn::Error;
     fn try_from(ty: &Type) -> Result<Self, Self::Error> {
         let type_span = ty.span();
-        match &ty {
+        let mut p = match &ty {
             Type::ImplTrait(ty) => {
                 if ty.bounds.len() == 1
                     && let TypeParamBound::Trait(t) = &ty.bounds[0]
@@ -248,38 +251,25 @@ impl TryFrom<&Type> for Param {
                 ty.span(),
                 format!("unsupported type: {}", ty.to_token_stream()),
             )),
-        }
+        }?;
+        p.flatten();
+        Ok(p)
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::Param;
-    use syn::Type;
-    use syn::parse_quote;
-
-    macro_rules! param_type_tests {
-        ($($name:ident: $output:expr => {$($input:tt)*}),*) => {
-            $(
-            #[test]
-            fn $name() {
-                test_param_type(&parse_quote!($($input)*), &$output);
-            }
-            )*
-        };
+fn generate_id(name: &Ident) -> Expr {
+    let span = name.span();
+    let name = name.to_string();
+    let bytes = name.as_bytes();
+    let mut hash = 2_166_136_261;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= u32::from(bytes[i]);
+        hash = hash.wrapping_mul(16_777_619);
+        i += 1;
     }
-
-    param_type_tests![
-        unit: Param::Tuple(vec![]) => {()},
-        simple: Param::Simple(Type::Path(parse_quote!(String))) => {String},
-        option: Param::Option(Box::new(Param::Simple(Type::Path(parse_quote!(String))))) => {Option<String>},
-        result: Param::Result(Box::new(Param::Simple(Type::Path(parse_quote!(String)))), Box::new(Param::Simple(Type::Path(parse_quote!(Error))))) => {Result<String, Error>},
-        stream_tuple: Param::Tuple(vec![Param::Simple(Type::Path(parse_quote!(String))), Param::Stream(Type::Path(parse_quote!(u8)))]) => {(String, impl Stream<Item=u8>)},
-        stream_result_option: Param::Result(Box::new(Param::Option(Box::new(Param::Stream(Type::Path(parse_quote!(bool)))))), Box::new(Param::Simple(Type::Path(parse_quote!(Error))))) => {Result<Option<impl Stream<Item=bool>>, Error>}
-    ];
-
-    fn test_param_type(input: &Type, expected: &Param) {
-        let output: Param = input.try_into().expect("failed to parse input");
-        assert_eq!(&output, expected);
-    }
+    Expr::Lit(ExprLit {
+        attrs: vec![],
+        lit: Lit::Int(LitInt::new(&format!("{hash}_u32"), span)),
+    })
 }

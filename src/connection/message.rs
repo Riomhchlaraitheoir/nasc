@@ -11,6 +11,14 @@ use thiserror::Error;
 #[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
 pub struct ServiceID(u32);
 
+impl ServiceID {
+    /// Returns the u32 service ID
+    #[must_use]
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
 /// Identifies a certain stream
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, From, Into, Display, Ord, PartialOrd)]
 #[cfg_attr(all(test, not(target_arch="wasm32")), derive(proptest_derive::Arbitrary))]
@@ -711,7 +719,7 @@ mod tests {
         }
     }
 
-    // #[test]
+    // #[tests]
     // fn debug_message() {
     //     let mut buffer = include_bytes!("../../debug.bin");
     //     let message = Message::deserialise(buffer).expect("Failed to deserialise");

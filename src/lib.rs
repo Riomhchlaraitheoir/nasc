@@ -14,6 +14,7 @@ pub mod format;
 #[doc = include_str!("../docs/service.md")]
 #[doc(inline)]
 pub use macros::service;
+pub use macros::method_id;
 
 use crate::__macros::imports::Stream;
 use crate::connection::message::{HandleError, RequestID};
