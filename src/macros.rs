@@ -7,7 +7,7 @@ pub mod imports {
             ServiceManager, TeardownGuard,
             client::{Client, ClientError, ClientResponseFuture},
             message::{StreamID, RequestID, ServiceID, HandleError},
-            MethodID
+            MethodID, IncomingStream
         },
         format::{Format, ReadFormat, WriteFormat},
     };

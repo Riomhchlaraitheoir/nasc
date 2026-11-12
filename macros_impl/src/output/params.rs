@@ -23,18 +23,15 @@ impl Param {
             Self::Stream(stream) => quote!{
                 {
                     let format = format.clone();
-                    imports::StreamExt::filter_map(manager.incoming_stream(imports::StreamID::from(value), guard.clone()).await, move |bytes| {
-                        let format = format.clone();
-                        async move {
-                            match imports::ReadFormat::<#stream>::read(&format, &bytes) {
-                                Ok(value) => Some(value),
-                                Err(error) => {
-                                    imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
-                                    None
-                                }
+                    manager.incoming_stream(imports::StreamID::from(value), guard.clone(), move |bytes| {
+                        match imports::ReadFormat::<#stream>::read(&format, &bytes) {
+                            Ok(value) => Some(value),
+                            Err(error) => {
+                                imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
+                                None
                             }
                         }
-                    })
+                    }).await
                 }
             },
             Self::Service(service) => quote!{

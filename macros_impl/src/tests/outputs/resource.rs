@@ -507,7 +507,7 @@ mod resource_service {
         fn updates(
             &self,
         ) -> imports::ClientResponseFuture<
-            impl imports::Future<Output = Result<impl imports::Stream<Item = T> + Send + 'static, imports::ClientError>>
+            impl imports::Future<Output = Result<imports::IncomingStream<T>, imports::ClientError>>
             + Send,
         >;
         #[doc = r""]
@@ -610,7 +610,7 @@ mod resource_service {
         fn updates(
             &self,
         ) -> imports::ClientResponseFuture<
-            impl Future<Output = Result<impl imports::Stream<Item = T>, imports::ClientError>> + Send,
+            impl Future<Output = Result<imports::IncomingStream<T>, imports::ClientError>> + Send,
         > {
             let request = {
                 let format = self.format.clone();
@@ -631,25 +631,19 @@ mod resource_service {
                         .map_err(imports::ClientError::Deserialise)?;
                     Ok({
                         let format = format.clone();
-                        imports::StreamExt::filter_map(
-                            manager
-                                .incoming_stream(imports::StreamID::from(value), guard.clone())
-                                .await,
-                            move |bytes| {
-                                let format = format.clone();
-                                async move {
-                                    match imports::ReadFormat::<T>::read(&format, &bytes) {
-                                        Ok(value) => Some(value),
-                                        Err(error) => {
-                                            imports::tracing::error!(
-                                                "Failed to deserialise bytes from stream: {error}"
-                                            );
-                                            None
-                                        }
+                        manager
+                            .incoming_stream(imports::StreamID::from(value), guard.clone(), move |bytes| {
+                                match imports::ReadFormat::<T>::read(&format, &bytes) {
+                                    Ok(value) => Some(value),
+                                    Err(error) => {
+                                        imports::tracing::error!(
+                                            "Failed to deserialise bytes from stream: {error}"
+                                        );
+                                        None
                                     }
                                 }
-                            },
-                        )
+                            })
+                            .await
                     })
                 }
             };

@@ -6,35 +6,35 @@ pub mod message;
 pub mod sink_stream;
 mod handler;
 
-use crate::{Handler, Service};
 use crate::__macros::imports::Stream;
-use crate::connection::client::{Client, ClientStream, ClientStreamState};
+use crate::connection::client::{Client, ClientStreamState, InnerClientStream};
+use crate::connection::handler::{RawHandler, RegisteredHandler};
 use crate::connection::message::{
     ConnectionError, HandleError, Message, RequestID, ServiceID, StreamID, StreamMessage,
 };
+use crate::format::Format;
 use crate::runtime::AsyncRuntime;
-use async_channel::{Receiver, Sender, bounded};
+use crate::{Handler, Service};
+use async_channel::{bounded, Receiver, Sender};
 use async_lock::Mutex;
 use bon::Builder;
 use derive_more::Display;
 use futures::channel::oneshot;
 use futures::future::{AbortHandle, Abortable, FusedFuture};
-use futures::stream::{BoxStream, FusedStream};
+use futures::stream::{BoxStream};
 use futures::{FutureExt, StreamExt};
 use log::warn;
 use std::fmt::{Debug, Display};
-use std::future::ready;
+use std::future::{ready, Ready};
 use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tracing::{debug, error};
 use whirlwind::ShardMap;
-use crate::connection::handler::{RawHandler, RegisteredHandler};
-use crate::format::Format;
 
 /// Identifies a certain request
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, Display, Ord, PartialOrd)]
@@ -387,22 +387,32 @@ impl ServiceManager {
     }
 
     /// Create a new incoming stream
-    pub async fn incoming_stream(
+    pub async fn incoming_stream<T>(
         &self,
         stream_id: StreamID,
         guard: TeardownGuard,
-    ) -> impl FusedStream<Item = Vec<u8>> + Send + 'static + use<> {
+        parse: impl Fn(Vec<u8>) -> Option<T> + Send + 'static,
+    ) -> IncomingStream<T> {
         debug!("Received incoming stream {stream_id}");
         let (sender, receiver) = bounded(10);
         self.0.incoming_streams.insert(stream_id, sender).await;
-        ClientStream {
+        InnerClientStream {
             receiver,
             guard,
             manager: Arc::clone(&self.0),
             stream_id,
             state: ClientStreamState::Ready,
-        }
+        }.filter_map(Box::new(move |bytes| ready(parse(bytes))))
     }
+}
+
+/// The stream type for an incoming stream
+pub type IncomingStream<T> = futures::stream::FilterMap<InnerClientStream, Ready<Option<T>>, Box<dyn Fn(Vec<u8>) -> Ready<Option<T>> + Send>>;
+
+#[cfg(test)]
+#[allow(dead_code, reason = "Only used to assert IncomingStream<T>: Stream<Item=T>")]
+fn assert_incoming_stream<T>(stream: &IncomingStream<T>) {
+    crate::assert_stream::<T>(stream);
 }
 
 /// Drives the event loop for the connection
@@ -411,7 +421,6 @@ impl ServiceManager {
 ///
 /// Automatically terminates when the last client/handler is dropped
 pub struct ConnectionDriver {
-    // TODO: make fields pub and allow Connection impl to drive loop
     manager: Arc<ConnectionManager>,
     message_receiver: Receiver<Message>,
     teardown_signal: Mutex<TeardownSignal>,

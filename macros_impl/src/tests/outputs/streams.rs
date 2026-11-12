@@ -98,18 +98,15 @@ mod streams_rpc {
                         let value = stream;
                         {
                             let format = format.clone();
-                            imports::StreamExt::filter_map(manager.incoming_stream(imports::StreamID::from(value), guard.clone()).await, move |bytes| {
-                                let format = format.clone();
-                                async move {
-                                    match imports::ReadFormat::<Foo>::read(&format, &bytes) {
-                                        Ok(value) => Some(value),
-                                        Err(error) => {
-                                            imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
-                                            None
-                                        }
+                            manager.incoming_stream(imports::StreamID::from(value), guard.clone(),move |bytes| {
+                                match imports::ReadFormat::<Foo>::read(&format, &bytes) {
+                                    Ok(value) => Some(value),
+                                    Err(error) => {
+                                        imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
+                                        None
                                     }
                                 }
-                            })
+                            }).await
                         }
                     };
                     let value = self.server.send(stream).await;
@@ -123,18 +120,15 @@ mod streams_rpc {
                         if let Some(value) = value {
                             Some({
                                 let format = format.clone();
-                                imports::StreamExt::filter_map(manager.incoming_stream(imports::StreamID::from(value), guard.clone()).await, move |bytes| {
-                                    let format = format.clone();
-                                    async move {
-                                        match imports::ReadFormat::<Foo>::read(&format, &bytes) {
-                                            Ok(value) => Some(value),
-                                            Err(error) => {
-                                                imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
-                                                None
-                                            }
+                                manager.incoming_stream(imports::StreamID::from(value), guard.clone(), move |bytes| {
+                                    match imports::ReadFormat::<Foo>::read(&format, &bytes) {
+                                        Ok(value) => Some(value),
+                                        Err(error) => {
+                                            imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
+                                            None
                                         }
                                     }
-                                })
+                                }).await
                             })
                         } else { None }
                     };
@@ -147,18 +141,15 @@ mod streams_rpc {
                              let value = value.1;
                              {
                                  let format = format.clone();
-                                 imports::StreamExt::filter_map(manager.incoming_stream(imports::StreamID::from(value), guard.clone()).await, move |bytes| {
-                                     let format = format.clone();
-                                     async move {
-                                         match imports::ReadFormat::<Foo>::read(&format, &bytes) {
-                                             Ok(value) => Some(value),
-                                             Err(error) => {
-                                                 imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
-                                                 None
-                                             }
+                                 manager.incoming_stream(imports::StreamID::from(value), guard.clone(), move |bytes| {
+                                     match imports::ReadFormat::<Foo>::read(&format, &bytes) {
+                                         Ok(value) => Some(value),
+                                         Err(error) => {
+                                             imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
+                                             None
                                          }
                                      }
-                                 })
+                                 }).await
                              }
                          },)
                     };
@@ -194,7 +185,7 @@ mod streams_rpc {
         #[doc = r" Returns a future builder that allows certain options to be set before `await`-ing"]
         #[doc = r""]
         #[doc = r" see [`ClientResponseFuture`](imports::ClientResponseFuture)"]
-        fn receive(&self) -> imports::ClientResponseFuture<impl imports::Future<Output=Result<impl imports::Stream<Item=Foo>, imports::ClientError>> + Send>;
+        fn receive(&self) -> imports::ClientResponseFuture<impl imports::Future<Output=Result<imports::IncomingStream<Foo>, imports::ClientError>> + Send>;
         #[doc = r""]
         #[doc = r" Returns a future builder that allows certain options to be set before `await`-ing"]
         #[doc = r""]
@@ -204,7 +195,7 @@ mod streams_rpc {
         #[doc = r" Returns a future builder that allows certain options to be set before `await`-ing"]
         #[doc = r""]
         #[doc = r" see [`ClientResponseFuture`](imports::ClientResponseFuture)"]
-        fn multiple(&self, option: Option<impl imports::Stream<Item=Foo> + Send + 'static>, tuple: (Foo, impl imports::Stream<Item=Foo> + Send + 'static,)) -> imports::ClientResponseFuture<impl imports::Future<Output=Result<Result<impl imports::Stream<Item=Bar>, Error>, imports::ClientError>> + Send>;
+        fn multiple(&self, option: Option<impl imports::Stream<Item=Foo> + Send + 'static>, tuple: (Foo, impl imports::Stream<Item=Foo> + Send + 'static,)) -> imports::ClientResponseFuture<impl imports::Future<Output=Result<Result<imports::IncomingStream<Bar>, Error>, imports::ClientError>> + Send>;
     }
     #[derive(Debug, Clone, PartialEq)]
     pub struct StreamsRPCClientImpl<_Format, > {
@@ -234,7 +225,7 @@ mod streams_rpc {
         _Format: imports::WriteFormat<Foo>,
     {
         type Format = _Format;
-        fn receive(&self) -> imports::ClientResponseFuture<impl Future<Output=Result<impl imports::Stream<Item=Foo>, imports::ClientError>> + Send> {
+        fn receive(&self) -> imports::ClientResponseFuture<impl Future<Output=Result<imports::IncomingStream<Foo>, imports::ClientError>> + Send> {
             let request = {
                 let format = self.format.clone();
                 let manager = self.client.service_manager();
@@ -252,18 +243,15 @@ mod streams_rpc {
                     let value: u32 = format.read(&response).map_err(imports::ClientError::Deserialise)?;
                     Ok({
                         let format = format.clone();
-                        imports::StreamExt::filter_map(manager.incoming_stream(imports::StreamID::from(value), guard.clone()).await, move |bytes| {
-                            let format = format.clone();
-                            async move {
-                                match imports::ReadFormat::<Foo>::read(&format, &bytes) {
-                                    Ok(value) => Some(value),
-                                    Err(error) => {
-                                        imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
-                                        None
-                                    }
+                        manager.incoming_stream(imports::StreamID::from(value), guard.clone(), move |bytes| {
+                            match imports::ReadFormat::<Foo>::read(&format, &bytes) {
+                                Ok(value) => Some(value),
+                                Err(error) => {
+                                    imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
+                                    None
                                 }
                             }
-                        })
+                        }).await
                     })
                 }
             };
@@ -309,7 +297,7 @@ mod streams_rpc {
             };
             self.client.send(request, imports::MethodID::_new(1919010991_u32), response)
         }
-        fn multiple(&self, option: Option<impl imports::Stream<Item=Foo> + Send + 'static>, tuple: (Foo, impl imports::Stream<Item=Foo> + Send + 'static,)) -> imports::ClientResponseFuture<impl Future<Output=Result<Result<impl imports::Stream<Item=Bar>, Error>, imports::ClientError>> + Send> {
+        fn multiple(&self, option: Option<impl imports::Stream<Item=Foo> + Send + 'static>, tuple: (Foo, impl imports::Stream<Item=Foo> + Send + 'static,)) -> imports::ClientResponseFuture<impl Future<Output=Result<Result<imports::IncomingStream<Bar>, Error>, imports::ClientError>> + Send> {
             let request = {
                 let format = self.format.clone();
                 let manager = self.client.service_manager();
@@ -374,18 +362,15 @@ mod streams_rpc {
                     Ok(match value {
                         Ok(value) => Ok({
                             let format = format.clone();
-                            imports::StreamExt::filter_map(manager.incoming_stream(imports::StreamID::from(value), guard.clone()).await, move |bytes| {
-                                let format = format.clone();
-                                async move {
-                                    match imports::ReadFormat::<Bar>::read(&format, &bytes) {
-                                        Ok(value) => Some(value),
-                                        Err(error) => {
-                                            imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
-                                            None
-                                        }
+                            manager.incoming_stream(imports::StreamID::from(value), guard.clone(), move |bytes| {
+                                match imports::ReadFormat::<Bar>::read(&format, &bytes) {
+                                    Ok(value) => Some(value),
+                                    Err(error) => {
+                                        imports::tracing::error!("Failed to deserialise bytes from stream: {error}");
+                                        None
                                     }
                                 }
-                            })
+                            }).await
                         }),
                         Err(value) => Err(value)
                     })

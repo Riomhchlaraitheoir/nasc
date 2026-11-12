@@ -159,8 +159,9 @@ pub enum ClientError {
     Deserialise(Box<dyn Error + Send>),
 }
 
+/// The stream of binary item, before they are parsed
 #[pin_project(PinnedDrop)]
-pub(super) struct ClientStream {
+pub struct InnerClientStream {
     #[pin]
     pub(super) receiver: Receiver<Vec<u8>>,
     pub(super) guard: TeardownGuard,
@@ -176,7 +177,7 @@ pub(super) enum ClientStreamState {
     Done,
 }
 
-impl Stream for ClientStream {
+impl Stream for InnerClientStream {
     type Item = Vec<u8>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.is_terminated() {
@@ -240,14 +241,14 @@ impl Stream for ClientStream {
     }
 }
 
-impl FusedStream for ClientStream {
+impl FusedStream for InnerClientStream {
     fn is_terminated(&self) -> bool {
         matches!(self.state, ClientStreamState::Done)
     }
 }
 
 #[pinned_drop]
-impl PinnedDrop for ClientStream {
+impl PinnedDrop for InnerClientStream {
     fn drop(self: Pin<&mut Self>) {
         self.manager.spawn_send(Message::Stream {
             stream_id: self.stream_id,
