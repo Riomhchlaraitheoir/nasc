@@ -22,7 +22,7 @@ mod streams_rpc {
     }
     impl<> imports::Service for StreamsRPC<> {
         type Client<_Format: imports::Format> = StreamsRPCClientImpl<_Format, >;
-        fn client<_Format: imports::Format>(client: imports::Client<Self>, format: _Format) -> Self::Client<_Format> { StreamsRPCClientImpl { client, format, _generics: imports::PhantomData } }
+        fn client<_Format: imports::Format>(client: imports::Client<Self>, format: _Format) -> Self::Client<_Format> { StreamsRPCClientImpl { client: ::std::sync::Arc::new(client), format, _generics: imports::PhantomData } }
         fn service_name() -> &'static str { stringify!(StreamsRPC) }
     }
     impl<_Server, _Format, > imports::ServiceWithServer<_Server, _Format> for StreamsRPC<>
@@ -199,7 +199,7 @@ mod streams_rpc {
     }
     #[derive(Debug, Clone, PartialEq)]
     pub struct StreamsRPCClientImpl<_Format, > {
-        client: imports::Client<StreamsRPC<>>,
+        client: ::std::sync::Arc::<imports::Client<StreamsRPC<>>>,
         format: _Format,
         _generics: imports::PhantomData<fn() -> ()>,
     }

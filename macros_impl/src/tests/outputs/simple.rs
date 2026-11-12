@@ -29,7 +29,7 @@ mod todo_service {
             client: imports::Client<Self>,
             format: _Format,
         ) -> Self::Client<_Format> {
-            TodoServiceClientImpl { client, format, _generics: imports::PhantomData }
+            TodoServiceClientImpl { client: ::std::sync::Arc::new(client), format, _generics: imports::PhantomData }
         }
         fn service_name() -> &'static str {
             stringify!(TodoService)
@@ -174,7 +174,7 @@ mod todo_service {
     }
     #[derive(Debug, Clone, PartialEq)]
     pub struct TodoServiceClientImpl<_Format> {
-        client: imports::Client<TodoService>,
+        client: ::std::sync::Arc<imports::Client<TodoService>>,
         format: _Format,
         _generics: imports::PhantomData<fn() -> ()>
     }

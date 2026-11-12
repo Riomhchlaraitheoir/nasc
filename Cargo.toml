@@ -114,5 +114,9 @@ name = "resources_server"
 required-features = ["__test"]
 
 [[test]]
+name = "resources"
+required-features = ["__test"]
+
+[[test]]
 name = "websocket"
 required-features = ["__test"]

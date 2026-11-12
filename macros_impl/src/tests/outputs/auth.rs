@@ -27,7 +27,7 @@ mod public_api {
             format: _Format,
         ) -> Self::Client<_Format> {
             PublicApiClientImpl {
-                client,
+                client: ::std::sync::Arc::new(client),
                 format,
                 _generics: imports::PhantomData,
             }
@@ -159,7 +159,7 @@ mod public_api {
     }
     #[derive(Debug, Clone, PartialEq)]
     pub struct PublicApiClientImpl<_Format> {
-        client: imports::Client<PublicApi>,
+        client: ::std::sync::Arc<imports::Client<PublicApi>>,
         format: _Format,
         _generics: imports::PhantomData<fn() -> ()>,
     }
@@ -274,7 +274,7 @@ mod auth_api {
             format: _Format,
         ) -> Self::Client<_Format> {
             AuthApiClientImpl {
-                client,
+                client: ::std::sync::Arc::new(client),
                 format,
                 _generics: imports::PhantomData,
             }
@@ -361,7 +361,7 @@ mod auth_api {
     }
     #[derive(Debug, Clone, PartialEq)]
     pub struct AuthApiClientImpl<_Format> {
-        client: imports::Client<AuthApi>,
+        client: ::std::sync::Arc<imports::Client<AuthApi>>,
         format: _Format,
         _generics: imports::PhantomData<fn() -> ()>,
     }

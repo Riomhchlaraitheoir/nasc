@@ -66,7 +66,7 @@ impl ToTokens for ServiceImpl<'_> {
 
                 fn client<_Format: imports::Format>(client: imports::Client<Self>, format: _Format) -> Self::Client<_Format> {
                     #client_struct {
-                        client,
+                        client: ::std::sync::Arc::new(client),
                         format,
                         _generics: imports::PhantomData,
                     }

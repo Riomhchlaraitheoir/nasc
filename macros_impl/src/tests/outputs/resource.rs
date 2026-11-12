@@ -29,7 +29,7 @@ mod resources_service {
             format: _Format,
         ) -> Self::Client<_Format> {
             ResourcesServiceClientImpl {
-                client,
+                client: ::std::sync::Arc::new(client),
                 format,
                 _generics: imports::PhantomData,
             }
@@ -163,7 +163,7 @@ mod resources_service {
     }
     #[derive(Debug, Clone, PartialEq)]
     pub struct ResourcesServiceClientImpl<_Format> {
-        client: imports::Client<ResourcesService>,
+        client: ::std::sync::Arc<imports::Client<ResourcesService>>,
         format: _Format,
         _generics: imports::PhantomData<fn() -> ()>,
     }
@@ -304,7 +304,7 @@ mod resource_service {
             format: _Format,
         ) -> Self::Client<_Format> {
             ResourceServiceClientImpl {
-                client,
+                client: ::std::sync::Arc::new(client),
                 format,
                 _generics: imports::PhantomData,
             }
@@ -545,7 +545,7 @@ mod resource_service {
     where
         T: Resource,
     {
-        client: imports::Client<ResourceService<T>>,
+        client: ::std::sync::Arc::<imports::Client<ResourceService<T>>>,
         format: _Format,
         _generics: imports::PhantomData<fn() -> (T,)>,
     }
@@ -783,7 +783,7 @@ mod subscriber {
             format: _Format,
         ) -> Self::Client<_Format> {
             SubscriberClientImpl {
-                client,
+                client: ::std::sync::Arc::new(client),
                 format,
                 _generics: imports::PhantomData,
             }
@@ -944,7 +944,7 @@ mod subscriber {
     where
         T: Resource,
     {
-        client: imports::Client<Subscriber<T>>,
+        client: ::std::sync::Arc<imports::Client<Subscriber<T>>>,
         format: _Format,
         _generics: imports::PhantomData<fn() -> (T,)>,
     }

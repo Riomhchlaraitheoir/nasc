@@ -61,7 +61,7 @@ impl ToTokens for ClientStruct<'_> {
         tokens.extend(quote! {
             #[derive(Debug, Clone, PartialEq)]
             pub struct #client_struct<_Format, #(#generic_types),*> #where_clause {
-                client: imports::Client<#service<#(#generic_types),*>>,
+                client: ::std::sync::Arc<imports::Client<#service<#(#generic_types),*>>>,
                 format: _Format,
                 _generics: imports::PhantomData<fn() -> (#(#generic_types,)*)>,
             }

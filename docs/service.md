@@ -6,19 +6,27 @@ It consumes the macro and provides a number of generated types
 
 For example:
 
-```rust
-#[rpc]
+```rust,ignore
+use nasc::service;
+
+#[service]
 trait Example {
     fn call(arg:u8) -> String;
 }
 ```
 
 This is a simplified, conceptual idea of the generated code
-```rust
+```rust,ignore
+use nasc::{Service, connection::client::{Client, ClientError}};
+
 struct Example;
 
-impl Rpc for Example {
+impl Service for Example {
+    type Client<F> = ExampleClientImpl<F>;
     
+    fn client<F: Format>(format: F) -> Self::Client<F> {
+        ExampleClientImpl {}
+    }
 }
 
 impl Example {
@@ -38,6 +46,10 @@ trait ExampleClient {
     /// see generated docs for more detail
     async fn call(&self, arg: u8) -> Result<String, ClientError>;
 }
+
+struct ExampleClientImpl<F: Format> {
+    
+}
 ```
 
 For details of how to interact with the generated items see [Crate docs](crate)
@@ -47,11 +59,10 @@ For details of how to interact with the generated items see [Crate docs](crate)
 This macro takes some arguments alongside the trait definition:
 
 - `nasc`: A path to the actual `nasc` crate (default: `::nasc`)
-- `panic_handler`: The strategy for handling panics on this service, see [`panic_handler`](crate::panic_handler)
 
 eg:
-```rust
-#[rpc(nasc = custom::path::to::nasc, panic_handler = catch)]
+```rust,ignore
+#[service(nasc = custom::path::to::nasc)]
 trait Service {
     fn call();
 }
